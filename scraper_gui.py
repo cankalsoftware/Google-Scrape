@@ -1513,10 +1513,9 @@ class GoogleLeadScraperSuite(tk.Tk):
             return f"https://www.bing.com/search?q={encoded_query}&first={first}&rdr=1"
         elif engine == "DuckDuckGo":
             if page == 0:
-                return f"https://duckduckgo.com/?q={encoded_query}&kl=uk-en"
+                return f"https://duckduckgo.com/?q={encoded_query}&kl=uk-en&ia=web"
             else:
-                start = page * 30
-                return f"https://html.duckduckgo.com/html/?q={encoded_query}&s={start}"
+                return f"https://duckduckgo.com/?q={encoded_query}&kl=uk-en&ia=web&s={page * 30}"
         elif engine == "Brave":
             return f"https://search.brave.com/search?q={encoded_query}&offset={page}&spellcheck=0"
         elif engine == "Yahoo":
@@ -1595,15 +1594,25 @@ class GoogleLeadScraperSuite(tk.Tk):
                     parsed_items.append({"title": raw_title, "href": href, "snippet": snippet})
 
         elif engine == "DuckDuckGo":
-            cards = soup.find_all("div", class_=re.compile(r"result")) or soup.find_all("article") or soup.find_all("td", class_="result-snippet")
+            cards = (soup.find_all("article") or 
+                     soup.find_all("li", attrs={"data-layout": "organic"}) or 
+                     soup.find_all("div", class_=re.compile(r"result")) or 
+                     soup.find_all("td", class_="result-snippet"))
             for card in cards:
-                a = card.find("a", class_=re.compile(r"title|url|snippet")) or card.find("a", href=True)
+                t_el = (card.find("h2") or 
+                        card.find("h3") or 
+                        card.find("a", attrs={"data-testid": "result-title-a"}) or 
+                        card.find("a", class_=re.compile(r"title|url|snippet")))
+                if not t_el: continue
+                raw_title = t_el.get_text(strip=True)
+                a = (card.find("a", attrs={"data-testid": "result-title-a"}) or 
+                     card.find("a", class_=re.compile(r"title|url|snippet")) or 
+                     card.find("a", href=True))
                 if not a: continue
-                raw_title = a.get_text(strip=True)
                 href = a.get("href", "")
                 if "duckduckgo.com/l/?uddg=" in href:
                     parsed_qs = urllib.parse.parse_qs(urllib.parse.urlparse(href).query)
-                    href = parsed_qs.get("uddg", [href])[0]
+                    href = urllib.parse.unquote(parsed_qs.get("uddg", [href])[0])
                 snip_el = card.find("div", class_=re.compile(r"snippet")) or card.find("p") or card.find("td", class_="result-snippet")
                 snippet = snip_el.get_text(strip=True) if snip_el else ""
                 if raw_title and href and not href.startswith("/"):
@@ -1742,16 +1751,33 @@ class GoogleLeadScraperSuite(tk.Tk):
         
         threading.Thread(target=self._scrape_worker, args=(engine, query, pages, delay, browser_mode, use_tor), daemon=True).start()
 
+    def _interruptible_sleep(self, duration_sec):
+        """Sleeps in 50ms steps so clicking Stop interrupts immediately."""
+        steps = int(duration_sec / 0.05)
+        for _ in range(max(1, steps)):
+            if self.stop_requested:
+                return
+            time.sleep(0.05)
+
+    def _safe_quit_driver(self, d):
+        try:
+            d.quit()
+        except Exception:
+            pass
+
     def _stop_search(self):
-        if self.is_running:
+        if self.is_running or self.driver:
             self.stop_requested = True
-            self.status_var.set("Stopping search...")
-            if self.driver:
-                try:
-                    self.driver.quit()
-                except Exception:
-                    pass
-                self.driver = None
+            self.is_running = False
+            self.status_var.set("⏹ Search stopped.")
+            self._append_log("\n⏹ Search stopped by user.\n")
+            self.search_btn.configure(state=tk.NORMAL)
+            self.stop_btn.configure(state=tk.DISABLED)
+            
+            d = self.driver
+            self.driver = None
+            if d:
+                threading.Thread(target=lambda: self._safe_quit_driver(d), daemon=True).start()
 
     def _scrape_worker(self, engine, query, pages, delay, browser_mode, use_tor):
         if not SELENIUM_AVAILABLE:
@@ -1850,14 +1876,17 @@ class GoogleLeadScraperSuite(tk.Tk):
                 break
                 
             # Allow page to load & handle Cookie Consents
-            time.sleep(2.5)
+            self._interruptible_sleep(2.0)
+            if self.stop_requested or not self.driver:
+                break
+
             try:
                 for btn_id in ["L2AGLb", "W0wltc", "bnp_btn_accept"]:
                     try:
                         b = self.driver.find_element(By.ID, btn_id)
                         if b.is_displayed():
                             b.click()
-                            time.sleep(1.5)
+                            self._interruptible_sleep(1.0)
                             break
                     except Exception:
                         pass
@@ -1866,11 +1895,14 @@ class GoogleLeadScraperSuite(tk.Tk):
                     btns = self.driver.find_elements(By.XPATH, f"//button[contains(., '{btn_text}')]")
                     if btns and btns[0].is_displayed():
                         btns[0].click()
-                        time.sleep(1.5)
+                        self._interruptible_sleep(1.0)
                         break
             except Exception:
                 pass
                 
+            if self.stop_requested or not self.driver:
+                break
+
             # Safely fetch page source
             try:
                 page_src = self.driver.page_source if self.driver else ""
@@ -1913,14 +1945,13 @@ class GoogleLeadScraperSuite(tk.Tk):
                 for _ in range(60):
                     if self.stop_requested or not self.driver:
                         break
-                    time.sleep(1)
+                    self._interruptible_sleep(1.0)
                     try:
                         c_url = self.driver.current_url
                         c_src = self.driver.page_source
                         if "/sorry/" not in c_url and "captcha-form" not in c_src and "unusual traffic from your computer" not in c_src:
                             solved = True
                             self.after(0, self._append_log, "✅ CAPTCHA passed! Resuming extraction...\n\n")
-                            # If silent or mini mode, dock/minimize the popup window immediately so it does not linger
                             if browser_mode in ["headless", "mini"]:
                                 try:
                                     self.driver.minimize_window()
@@ -1931,7 +1962,7 @@ class GoogleLeadScraperSuite(tk.Tk):
                         pass
                         
                 if not solved and not self.stop_requested:
-                    self.after(0, self._append_log, "⏳ CAPTCHA was not solved in time.\n💡 Tip: Try switching Search Engine to '🦆 DuckDuckGo' or '🟦 Bing' or '🦁 Brave' (which don't require CAPTCHAs).\n")
+                    self.after(0, self._append_log, "⏳ CAPTCHA was not solved in time.\n💡 Tip: Try switching Search Engine to '🦁 Brave' or '🟦 Bing' or '🦆 DuckDuckGo' (which don't require CAPTCHAs).\n")
                     break
                     
                 try:
@@ -1939,6 +1970,9 @@ class GoogleLeadScraperSuite(tk.Tk):
                 except Exception:
                     pass
                 
+            if self.stop_requested:
+                break
+
             # Parse search results with engine-specific parser
             page_leads = self._parse_results_from_html(page_src, engine)
             
@@ -1952,7 +1986,7 @@ class GoogleLeadScraperSuite(tk.Tk):
             self.after(0, self._refresh_text_display)
             
             if page < pages - 1 and not self.stop_requested:
-                time.sleep(delay)
+                self._interruptible_sleep(delay)
                 
         # Clean up browser
         if self.driver:

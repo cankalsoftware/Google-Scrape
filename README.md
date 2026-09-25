@@ -1,11 +1,22 @@
 # ⚡ Multi-Engine Lead & Advanced Dork Extractor Suite
 
-A modern Python & Tkinter desktop application for precision OSINT, advanced Google Dorking, multi-engine scraping, contact lead generation, and automated data extraction.
+A modern Python & Tkinter desktop application for precision OSINT, advanced Google Dorking, multi-engine scraping, contact lead generation, automated email enrichment, and deliverability verification.
 
 ---
 
 ## 🌟 Key Features
 
+- **⚡ Automated Email Enrichment & Deliverability Verification**:
+  - **Entity Parsing**: Automatically extracts clean First Name, Surname, Job Role, and Organisation from LinkedIn snippets.
+  - **UK Fire & Rescue Services Domain Normalizer**: Comprehensive built-in registry matching all 50+ UK Fire Services (London Fire Brigade, GMFRS, WMFS, HIWFRS, Scottish Fire, etc.) to official `.gov.uk`, `.org.uk`, and `.net` domains.
+  - **Multi-Industry Support**: Extensible registry supporting NHS Trusts (`.nhs.uk`), Local Councils (`.gov.uk`), Police Constabularies (`.police.uk`), and custom corporate domains.
+  - **DNS MX Mailbox Verification**: Resolves live DNS MX records via `dnspython` to verify active Microsoft 365, Mimecast, and government secure mail gateways before displaying emails.
+  - **Deliverability Status Badges**: `🟢 Valid (MX Verified)`, `🟡 Risky`, `⚪ Not Found`, `🔴 Invalid (No MX)`.
+  - **Modular API Integrations**: Works 100% free with the built-in MX pattern synthesizer or integrates seamlessly with external APIs (Hunter.io, Apollo.io, Snov.io).
+  - **Embedded REST API Server**: Built-in background HTTP server exposing `POST /api/enrich` and `GET /api/health` on `http://127.0.0.1:8765`.
+- **📋 Interactive Lead Table & Enriched CSV Exports**:
+  - Dedicated interactive multi-column table (`ttk.Treeview`) with live sorting, color-coded badges, and 1-click **⚡ Batch Enrich** or **⚡ Enrich Selected** contact actions.
+  - Export full enriched dataset with **💾 Export Enriched CSV** (First Name, Surname, Job Title, Organisation, Enriched Email, Deliverability Status, Domain, MX Server, Phone, URL).
 - **🌐 Multi-Engine Search Support**:
   - Google, Bing, DuckDuckGo, Brave Search, Yahoo, Yandex, and Ahmia (Tor/Onion web).
 - **🧅 Tor SOCKS5 Proxy Routing**:
@@ -22,10 +33,6 @@ A modern Python & Tkinter desktop application for precision OSINT, advanced Goog
   - **Minimized Corner Window**: Keeps the browser parked as a tiny widget in the bottom corner of your screen.
   - **Normal Window**: Opens full-size browser for manual inspection or complex CAPTCHA solving.
   - **Smart CAPTCHA Auto-Popup**: Automatically opens a visible window only when a CAPTCHA challenge is detected and auto-minimizes once completed.
-- **📋 Lead Extraction & Multi-Format Exports**:
-  - Extracts Name, Job Title / Role, Organisation, Email addresses, Phone numbers, and Source URLs.
-  - Instant live search/filtering in results.
-  - Export to **Structured Cards**, **Excel TSV (Tab-Separated)**, **CSV**, **Emails Only**, or **URLs Only**.
 - **📜 Query History Log**:
   - Automatically logs every query with timestamps and search engines to `search_history.log` with 1-click query recall.
 
@@ -54,17 +61,34 @@ python scraper_gui.py
 
 ## 🛠️ Usage Guide
 
-1. **Build Your Query**:
-   - In **Tab 1 (Query Builder & Presets)**, select your target search engine (e.g. Google, DuckDuckGo, Bing).
-   - Enter your target site (e.g. `site:linkedin.com/in/`), industry keywords, job titles, and location.
-   - Click **+ Wrap site:** or **+ Quotes/OR** to auto-format boolean logic.
-2. **Execute Search**:
-   - Choose your page count and delay.
-   - Click **🚀 Search & Extract Leads**.
-3. **View & Export Leads**:
-   - Switch to **Tab 2 (Extracted Results & Text Box)** to review structured lead cards.
-   - Filter results live by typing in the filter box.
-   - Click **📋 Copy All**, **✉️ Copy Emails List**, or **💾 Export CSV File**.
+### 1. Build Your Query & Search
+1. In **Tab 1 (Query Builder & Presets)**, choose your search engine (Google, Bing, Brave, DuckDuckGo) or load a pre-configured template (e.g., *Fire & Rescue IT Leaders (UK)*).
+2. Click **🚀 Search & Extract Leads**.
+
+### 2. Enrich Leads & Verify Emails
+1. Switch to **Tab 2 (Extracted Results & Text Box)**.
+2. Review the scraped contacts in the **📋 Interactive Table**.
+3. Click **`⚡ Batch Enrich Leads`** to resolve official domains, generate corporate email addresses (`first.last@domain`), and check DNS MX server deliverability.
+4. Click **`💾 Export Enriched CSV`** to export a clean spreadsheet ready for CRM or outreach with columns:
+   - `First Name`, `Last Name`, `Full Name`, `Job Title / Role`, `Organisation`, `Resolved Domain`, `Enriched Email`, `Deliverability Status`, `MX Server Host`, `Phone`, `LinkedIn Profile URL`.
+
+---
+
+## 🌐 Local REST API Endpoint
+
+The application starts an embedded background REST API server on port `8765`:
+
+- **Health Check**: `GET http://127.0.0.1:8765/api/health`
+- **Enrich Contact**: `POST http://127.0.0.1:8765/api/enrich`
+  ```bash
+  curl -X POST http://127.0.0.1:8765/api/enrich \
+    -H "Content-Type: application/json" \
+    -d '{
+      "full_name": "John Smith",
+      "headline": "Head of IT",
+      "organisation": "London Fire Brigade"
+    }'
+  ```
 
 ---
 
@@ -81,3 +105,4 @@ Alternatively, select **`🦆 DuckDuckGo`** or **`🟦 Bing`** from the Search E
 
 ## 📄 License
 MIT License. Free for personal and commercial use.
+

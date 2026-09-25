@@ -2,6 +2,8 @@
 
 A modern Python & Tkinter desktop application for precision OSINT, advanced Google Dorking, multi-engine scraping, contact lead generation, automated email enrichment, and deliverability verification.
 
+> 📖 **Looking for a beginner walkthrough?** Read the [Beginner's User Guide & Walkthrough (USER_GUIDE.md)](file:///c:/Users/uyko7/Documents/VSCode/Google%20Scrape/USER_GUIDE.md) for step-by-step instructions.
+
 ---
 
 ## 🌟 Key Features

@@ -8,6 +8,7 @@ import time
 import urllib.parse
 import threading
 import http.server
+import webbrowser
 import requests
 from bs4 import BeautifulSoup
 import tkinter as tk
@@ -728,6 +729,12 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.enrich_custom_domain_var = tk.StringVar(value="")
         self.is_enriching = False
 
+        # Sorting & Categorisation Filter State
+        self.sort_column = None
+        self.sort_reverse = False
+        self.filter_company_var = tk.StringVar(value="(All Organisations)")
+        self.filter_status_var = tk.StringVar(value="(All Statuses)")
+
         # Start Local Enrichment REST Server in background thread
         threading.Thread(target=start_local_enrichment_server, daemon=True).start()
 
@@ -1250,7 +1257,7 @@ class GoogleLeadScraperSuite(tk.Tk):
         
         r0 = ttk.Radiobutton(toolbar, text="📋 Interactive Table", value="table", variable=self.format_var, command=self._refresh_text_display)
         r0.pack(side=tk.LEFT, padx=(0, 8))
-        ToolTip(r0, "Interactive multi-column lead table with deliverability badges and 1-click contact enrichment.")
+        ToolTip(r0, "Interactive multi-column lead table with live column header sorting, deliverability badges, and multi-lead selection.")
         
         r1 = ttk.Radiobutton(toolbar, text="🃏 Structured Cards", value="formatted", variable=self.format_var, command=self._refresh_text_display)
         r1.pack(side=tk.LEFT, padx=(0, 8))
@@ -1270,37 +1277,75 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.count_badge = ttk.Label(toolbar, text="0 leads collected", style="Badge.TLabel")
         self.count_badge.pack(side=tk.RIGHT)
         
-        # 2. Filter & Email Enrichment Action Bar
-        enrich_bar = ttk.Frame(self.tab_results)
-        enrich_bar.pack(fill=tk.X, pady=(2, 6))
+        # 2. Filter & Categorisation Bar (Row 1)
+        filter_bar = ttk.Frame(self.tab_results)
+        filter_bar.pack(fill=tk.X, pady=(2, 3))
         
-        filter_lbl = ttk.Label(enrich_bar, text="Filter Results:")
+        filter_lbl = ttk.Label(filter_bar, text="🔍 Search Filter:")
         filter_lbl.pack(side=tk.LEFT, padx=(0, 4))
         
         self.filter_var = tk.StringVar()
         self.filter_var.trace_add("write", lambda *args: self._refresh_text_display())
-        filter_entry = ttk.Entry(enrich_bar, textvariable=self.filter_var, font=("Segoe UI", 9), width=24)
+        filter_entry = ttk.Entry(filter_bar, textvariable=self.filter_var, font=("Segoe UI", 9), width=18)
         filter_entry.pack(side=tk.LEFT, padx=(0, 10))
-        ToolTip(filter_entry, "Filter live results by name, keyword, role, email, domain, or company.")
+        ToolTip(filter_entry, "Filter live results by any keyword, name, job title, domain, or email.")
         
-        # Enrichment Action Buttons
-        self.batch_enrich_btn = ttk.Button(enrich_bar, text="⚡ Batch Enrich Leads", style="Primary.TButton", command=self._start_batch_enrich)
+        # Organisation / Company Categorisation Dropdown Filter
+        comp_lbl = ttk.Label(filter_bar, text="🏢 Organisation:")
+        comp_lbl.pack(side=tk.LEFT, padx=(0, 4))
+        
+        self.company_filter_combo = ttk.Combobox(filter_bar, textvariable=self.filter_company_var, state="readonly", width=26)
+        self.company_filter_combo['values'] = ("(All Organisations)",)
+        self.company_filter_combo.current(0)
+        self.company_filter_combo.pack(side=tk.LEFT, padx=(0, 10))
+        self.company_filter_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_text_display())
+        ToolTip(self.company_filter_combo, "Categorise and filter results to show only contacts from a specific company or service.")
+        
+        # Deliverability Status Filter
+        stat_lbl = ttk.Label(filter_bar, text="🛡️ Status:")
+        stat_lbl.pack(side=tk.LEFT, padx=(0, 4))
+        
+        self.status_filter_combo = ttk.Combobox(filter_bar, textvariable=self.filter_status_var, state="readonly", width=18)
+        self.status_filter_combo['values'] = (
+            "(All Statuses)",
+            "🟢 Valid Only",
+            "🟡 Risky Only",
+            "⚪ Not Found Only",
+            "🔴 Invalid Only"
+        )
+        self.status_filter_combo.current(0)
+        self.status_filter_combo.pack(side=tk.LEFT, padx=(0, 8))
+        self.status_filter_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_text_display())
+        ToolTip(self.status_filter_combo, "Filter results by MX deliverability verification status.")
+        
+        btn_reset_filters = ttk.Button(filter_bar, text="🔄 Reset Filters", style="Secondary.TButton", command=self._reset_results_filters)
+        btn_reset_filters.pack(side=tk.LEFT)
+        ToolTip(btn_reset_filters, "Clears text filter, organisation dropdown, and status filter back to default.")
+        
+        # 3. Action Toolbar (Row 2)
+        enrich_bar = ttk.Frame(self.tab_results)
+        enrich_bar.pack(fill=tk.X, pady=(2, 6))
+        
+        self.batch_enrich_btn = ttk.Button(enrich_bar, text="⚡ Batch Enrich All", style="Primary.TButton", command=self._start_batch_enrich)
         self.batch_enrich_btn.pack(side=tk.LEFT, padx=(0, 6))
-        ToolTip(self.batch_enrich_btn, "Automatically resolves official domains (.gov.uk / .org.uk / .net), discovers/synthesizes corporate email addresses, and verifies MX deliverability for all contacts.")
+        ToolTip(self.batch_enrich_btn, "Automatically resolves official domains, synthesizes work emails, and checks DNS MX deliverability for ALL contacts in list.")
         
         self.single_enrich_btn = ttk.Button(enrich_bar, text="⚡ Enrich Selected", style="Accent.TButton", command=self._enrich_selected_lead)
         self.single_enrich_btn.pack(side=tk.LEFT, padx=(0, 6))
-        ToolTip(self.single_enrich_btn, "Enriches email & verifies MX deliverability for the currently selected contact.")
+        ToolTip(self.single_enrich_btn, "Enriches email & verifies MX deliverability for all selected rows (Hold Ctrl or Shift to select multiple lines).")
         
         self.settings_enrich_btn = ttk.Button(enrich_bar, text="⚙️ Enrichment Settings", style="Secondary.TButton", command=self._open_enrichment_settings)
         self.settings_enrich_btn.pack(side=tk.LEFT, padx=(0, 8))
-        ToolTip(self.settings_enrich_btn, "Configure target industry domain registry (UK Fire Services, NHS, Councils), email pattern formulas, and optional external API keys (Hunter, Apollo, Snov).")
+        ToolTip(self.settings_enrich_btn, "Configure target industry domain registry (UK Fire Services, NHS, Councils), email pattern formulas, and optional external API keys.")
+        
+        hint_sort = ttk.Label(enrich_bar, text="💡 Click any column title to sort (A-Z / Z-A). Hold Ctrl/Shift for multi-row selection.", foreground="#64748B", font=("Segoe UI", 8, "italic"))
+        hint_sort.pack(side=tk.LEFT)
         
         self.save_enriched_btn = ttk.Button(enrich_bar, text="💾 Export Enriched CSV", style="Success.TButton", command=self._save_to_enriched_csv)
         self.save_enriched_btn.pack(side=tk.RIGHT)
         ToolTip(self.save_enriched_btn, "Exports clean, enriched spreadsheet with First Name, Surname, Job Role, Organisation, Email, Domain, and MX Status.")
         
-        # 3. Main View Container (Holds both Interactive Treeview Table and Text Box)
+        # 4. Main View Container (Holds both Interactive Treeview Table and Text Box)
         self.view_container = ttk.Frame(self.tab_results)
         self.view_container.pack(fill=tk.BOTH, expand=True, pady=(0, 6))
         
@@ -1308,19 +1353,24 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.tree_frame = ttk.Frame(self.view_container)
         
         tree_cols = ("#", "first_name", "last_name", "role", "org", "email", "status", "domain", "url")
-        self.tree = ttk.Treeview(self.tree_frame, columns=tree_cols, show="headings", selectmode="browse")
+        self.col_titles = {
+            "#": "#",
+            "first_name": "First Name",
+            "last_name": "Surname",
+            "role": "Job Role / Title",
+            "org": "Organisation / Service",
+            "email": "Enriched Email",
+            "status": "Deliverability",
+            "domain": "Resolved Domain",
+            "url": "Source URL"
+        }
         
-        self.tree.heading("#", text="#")
-        self.tree.heading("first_name", text="First Name")
-        self.tree.heading("last_name", text="Surname")
-        self.tree.heading("role", text="Job Role / Title")
-        self.tree.heading("org", text="Organisation / Service")
-        self.tree.heading("email", text="Enriched Email")
-        self.tree.heading("status", text="Deliverability")
-        self.tree.heading("domain", text="Resolved Domain")
-        self.tree.heading("url", text="Source URL")
+        self.tree = ttk.Treeview(self.tree_frame, columns=tree_cols, show="headings", selectmode="extended")
         
-        self.tree.column("#", width=38, minwidth=30, anchor="center")
+        for col in tree_cols:
+            self.tree.heading(col, text=self.col_titles[col], command=lambda c=col: self._sort_by_column(c))
+        
+        self.tree.column("#", width=42, minwidth=30, anchor="center")
         self.tree.column("first_name", width=95, minwidth=75, anchor="w")
         self.tree.column("last_name", width=105, minwidth=80, anchor="w")
         self.tree.column("role", width=175, minwidth=120, anchor="w")
@@ -1348,6 +1398,19 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.tree.tag_configure("invalid", background="#FEF2F2", foreground="#991B1B")
         
         self.tree.bind("<Double-1>", self._on_tree_double_click)
+        
+        # Right-click context menu
+        self.tree_menu = tk.Menu(self, tearoff=0)
+        self.tree_menu.add_command(label="⚡ Enrich Selected Contact(s)", command=self._enrich_selected_lead)
+        self.tree_menu.add_command(label="🏢 Filter Table by this Organisation", command=self._filter_by_selected_org)
+        self.tree_menu.add_separator()
+        self.tree_menu.add_command(label="✉️ Copy Email", command=self._copy_selected_email)
+        self.tree_menu.add_command(label="📋 Copy Row Details", command=self._copy_selected_row)
+        self.tree_menu.add_command(label="🌐 Open Profile URL in Browser", command=self._open_selected_url)
+        self.tree_menu.add_separator()
+        self.tree_menu.add_command(label="🔄 Clear Filters / Show All", command=self._reset_results_filters)
+        
+        self.tree.bind("<Button-3>", self._show_tree_context_menu)
         
         # B. Text Box View (for Cards, TSV, CSV, Emails Only, URLs Only)
         self.text_container = ttk.Frame(self.view_container)
@@ -1418,11 +1481,41 @@ class GoogleLeadScraperSuite(tk.Tk):
         scrollable_frame = ttk.Frame(canvas)
         
         scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas_win = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Auto-expand inner frame to match canvas width
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(canvas_win, width=e.width))
         
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Smooth Mouse Wheel scrolling handlers
+        def _on_cheatsheet_mousewheel(event):
+            try:
+                if event.delta:
+                    canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                elif event.num == 4:
+                    canvas.yview_scroll(-1, "units")
+                elif event.num == 5:
+                    canvas.yview_scroll(1, "units")
+            except Exception:
+                pass
+
+        def _bind_cheatsheet_mousewheel(event=None):
+            canvas.bind_all("<MouseWheel>", _on_cheatsheet_mousewheel)
+            canvas.bind_all("<Button-4>", _on_cheatsheet_mousewheel)
+            canvas.bind_all("<Button-5>", _on_cheatsheet_mousewheel)
+
+        def _unbind_cheatsheet_mousewheel(event=None):
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+
+        canvas.bind("<Enter>", _bind_cheatsheet_mousewheel)
+        canvas.bind("<Leave>", _unbind_cheatsheet_mousewheel)
+        scrollable_frame.bind("<Enter>", _bind_cheatsheet_mousewheel)
+        scrollable_frame.bind("<Leave>", _unbind_cheatsheet_mousewheel)
         
         # 0. Engine Compatibility Overview
         compat_frame = ttk.LabelFrame(scrollable_frame, text=" 🌐 Multi-Engine Operator Compatibility Matrix ", padding="8")
@@ -2749,34 +2842,248 @@ class GoogleLeadScraperSuite(tk.Tk):
             messagebox.showinfo("Search Complete", f"Extraction completed on {self.engine_var.get()}!\n\nFound: {count} leads\nExtracted Emails: {email_count}\n\nResults are ready in the text box for copy/export.")
 
     def _get_filtered_data(self):
+        """Returns results filtered by search text, organisation, status, and sorted by active column."""
         filt = self.filter_var.get().lower().strip()
-        if not filt:
-            return self.results_data
+        comp_filter = self.filter_company_var.get().strip() if hasattr(self, "filter_company_var") else ""
+        stat_filter = self.filter_status_var.get().strip() if hasattr(self, "filter_status_var") else ""
+        
+        # Strip count from company filter e.g. "London Fire Brigade (12)" -> "London Fire Brigade"
+        if comp_filter and comp_filter != "(All Organisations)":
+            comp_match = re.sub(r'\s*\(\d+\)$', '', comp_filter).lower().strip()
+        else:
+            comp_match = ""
             
         filtered = []
         for r in self.results_data:
-            match = (
-                filt in r.get("Name", "").lower() or
-                filt in r.get("First Name", "").lower() or
-                filt in r.get("Last Name", "").lower() or
-                filt in r.get("Headline / Role", "").lower() or
-                filt in r.get("Organisation", "").lower() or
-                filt in r.get("Domain", "").lower() or
-                filt in r.get("Enriched Email", "").lower() or
-                filt in r.get("Email", "").lower() or
-                filt in r.get("Deliverability", "").lower() or
-                filt in r.get("URL", "").lower() or
-                filt in r.get("Snippet", "").lower()
-            )
-            if match:
-                filtered.append(r)
+            # 1. Free text search filter
+            if filt:
+                match = (
+                    filt in r.get("Name", "").lower() or
+                    filt in r.get("First Name", "").lower() or
+                    filt in r.get("Last Name", "").lower() or
+                    filt in r.get("Headline / Role", "").lower() or
+                    filt in r.get("Organisation", "").lower() or
+                    filt in r.get("Domain", "").lower() or
+                    filt in r.get("Enriched Email", "").lower() or
+                    filt in r.get("Email", "").lower() or
+                    filt in r.get("Deliverability", "").lower() or
+                    filt in r.get("URL", "").lower() or
+                    filt in r.get("Snippet", "").lower()
+                )
+                if not match:
+                    continue
+                    
+            # 2. Company / Organisation filter
+            if comp_match:
+                r_org = r.get("Organisation", "").lower().strip()
+                if comp_match not in r_org:
+                    continue
+                    
+            # 3. Deliverability Status filter
+            if stat_filter and stat_filter != "(All Statuses)":
+                r_deliv = r.get("Deliverability", "")
+                if "Valid" in stat_filter and "Valid" not in r_deliv:
+                    continue
+                elif "Risky" in stat_filter and "Risky" not in r_deliv:
+                    continue
+                elif "Not Found" in stat_filter and ("Valid" in r_deliv or "Risky" in r_deliv or "Invalid" in r_deliv or "No MX" in r_deliv):
+                    continue
+                elif "Invalid" in stat_filter and ("Invalid" not in r_deliv and "No MX" not in r_deliv):
+                    continue
+                    
+            filtered.append(r)
+            
+        # 4. Interactive Column Header Sorting
+        if hasattr(self, "sort_column") and self.sort_column:
+            def sort_key(item):
+                if self.sort_column == "#":
+                    return self.results_data.index(item) if item in self.results_data else 0
+                elif self.sort_column == "first_name":
+                    return (item.get("First Name") or "").lower()
+                elif self.sort_column == "last_name":
+                    return (item.get("Last Name") or "").lower()
+                elif self.sort_column == "role":
+                    return (item.get("Headline / Role") or "").lower()
+                elif self.sort_column == "org":
+                    return (item.get("Organisation") or "").lower()
+                elif self.sort_column == "email":
+                    return (item.get("Enriched Email") or item.get("Email") or "").lower()
+                elif self.sort_column == "status":
+                    return (item.get("Deliverability") or "").lower()
+                elif self.sort_column == "domain":
+                    return (item.get("Domain") or "").lower()
+                elif self.sort_column == "url":
+                    return (item.get("URL") or "").lower()
+                return ""
+                
+            filtered.sort(key=sort_key, reverse=self.sort_reverse)
+            
         return filtered
+
+    def _sort_by_column(self, col):
+        """Sorts the results table by the clicked column header (ascending or descending)."""
+        if self.sort_column == col:
+            self.sort_reverse = not self.sort_reverse
+        else:
+            self.sort_column = col
+            self.sort_reverse = False
+            
+        self._update_column_headers()
+        self._refresh_text_display()
+        
+        order_str = "Descending (Z-A)" if self.sort_reverse else "Ascending (A-Z)"
+        col_name = self.col_titles.get(col, col) if hasattr(self, "col_titles") else col
+        self.status_var.set(f"Sorted table by '{col_name}' ({order_str})")
+
+    def _update_column_headers(self):
+        """Updates table headers with ▲ or ▼ sort direction arrows."""
+        if not hasattr(self, "tree") or not hasattr(self, "col_titles"):
+            return
+        for c, title in self.col_titles.items():
+            if c == self.sort_column:
+                arrow = " ▼ (Z-A)" if self.sort_reverse else " ▲ (A-Z)"
+                self.tree.heading(c, text=f"{title}{arrow}")
+            else:
+                self.tree.heading(c, text=title)
+
+    def _update_company_filter_options(self):
+        """Updates organisation combobox with unique companies and counts from results."""
+        if not hasattr(self, "company_filter_combo"):
+            return
+            
+        counts = {}
+        for r in self.results_data:
+            org = r.get("Organisation", "").strip()
+            if org:
+                counts[org] = counts.get(org, 0) + 1
+                
+        sorted_orgs = sorted(counts.items(), key=lambda x: (-x[1], x[0].lower()))
+        options = ["(All Organisations)"] + [f"{org} ({cnt})" for org, cnt in sorted_orgs]
+        self.company_filter_combo['values'] = options
+        
+        curr = self.filter_company_var.get()
+        if not curr or curr not in options:
+            match_found = False
+            for opt in options:
+                if curr and curr != "(All Organisations)" and opt.startswith(curr):
+                    self.filter_company_var.set(opt)
+                    match_found = True
+                    break
+            if not match_found:
+                self.filter_company_var.set("(All Organisations)")
+
+    def _reset_results_filters(self):
+        """Resets search filter, company filter, status filter, and column sorting back to default."""
+        self.filter_var.set("")
+        self.filter_company_var.set("(All Organisations)")
+        self.filter_status_var.set("(All Statuses)")
+        self.sort_column = None
+        self.sort_reverse = False
+        self._update_column_headers()
+        self._refresh_text_display()
+        self.status_var.set("All result filters and sorting reset.")
+
+    def _show_tree_context_menu(self, event):
+        """Displays right-click context menu on table items."""
+        item = self.tree.identify_row(event.y)
+        if item:
+            curr_selection = self.tree.selection()
+            if item not in curr_selection:
+                self.tree.selection_set(item)
+            try:
+                self.tree_menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                self.tree_menu.grab_release()
+
+    def _filter_by_selected_org(self):
+        """Filters results by the organisation of the clicked table row."""
+        selected = self.tree.selection()
+        if not selected:
+            return
+        data = self._get_filtered_data()
+        try:
+            idx = int(selected[0])
+            if 0 <= idx < len(data):
+                org = data[idx].get("Organisation", "").strip()
+                if org:
+                    self.filter_company_var.set(org)
+                    self._refresh_text_display()
+                    self.status_var.set(f"Filtered results by organisation: '{org}'")
+        except Exception:
+            pass
+
+    def _copy_selected_email(self):
+        """Copies emails of selected table rows to clipboard."""
+        selected = self.tree.selection()
+        if not selected:
+            return
+        data = self._get_filtered_data()
+        emails = []
+        for item_id in selected:
+            try:
+                idx = int(item_id)
+                if 0 <= idx < len(data):
+                    e = data[idx].get("Enriched Email") or data[idx].get("Email")
+                    if e:
+                        emails.append(str(e).strip())
+            except Exception:
+                pass
+        if emails:
+            self.clipboard_clear()
+            self.clipboard_append(", ".join(emails))
+            self.status_var.set(f"Copied {len(emails)} email address(es) to clipboard.")
+            messagebox.showinfo("Copied Email", f"Copied {len(emails)} email address(es) to clipboard:\n\n" + "\n".join(emails[:10]))
+        else:
+            messagebox.showinfo("No Email Found", "The selected contact(s) do not have an email address yet.\n\nTip: Click '⚡ Enrich Selected' to discover and verify their email.")
+
+    def _copy_selected_row(self):
+        """Copies full details of selected rows to clipboard."""
+        selected = self.tree.selection()
+        if not selected:
+            return
+        data = self._get_filtered_data()
+        lines = []
+        for item_id in selected:
+            try:
+                idx = int(item_id)
+                if 0 <= idx < len(data):
+                    r = data[idx]
+                    email_val = r.get("Enriched Email") or r.get("Email", "-")
+                    lines.append(f"{r.get('First Name', '')} {r.get('Last Name', '')} | {r.get('Headline / Role', '')} | {r.get('Organisation', '')} | {email_val} | {r.get('Deliverability', '')} | {r.get('URL', '')}")
+            except Exception:
+                pass
+        if lines:
+            self.clipboard_clear()
+            self.clipboard_append("\n".join(lines))
+            self.status_var.set(f"Copied {len(lines)} contact row(s) to clipboard.")
+            messagebox.showinfo("Copied Details", f"Copied {len(lines)} row(s) to clipboard!")
+
+    def _open_selected_url(self):
+        """Opens profile URL of selected contact in default web browser."""
+        selected = self.tree.selection()
+        if not selected:
+            return
+        data = self._get_filtered_data()
+        for item_id in selected:
+            try:
+                idx = int(item_id)
+                if 0 <= idx < len(data):
+                    url = data[idx].get("URL", "")
+                    if url and (url.startswith("http://") or url.startswith("https://")):
+                        webbrowser.open(url)
+                        self.status_var.set(f"Opened URL in browser: {url[:50]}...")
+                        break
+            except Exception:
+                pass
 
     def _refresh_text_display(self):
         fmt = self.format_var.get()
         data = self._get_filtered_data()
         count = len(data)
         total = len(self.results_data)
+        
+        # Update organisation filter combobox options
+        self._update_company_filter_options()
         
         # Count verified emails or enriched emails
         email_count = sum(1 for r in self.results_data if (r.get("Enriched Email") or r.get("Email")))
@@ -2918,7 +3225,7 @@ class GoogleLeadScraperSuite(tk.Tk):
                 if all_emails:
                     self.results_text.insert(tk.END, "\n".join(all_emails))
                 else:
-                    self.results_text.insert(tk.END, "No email addresses found.\nClick '⚡ Batch Enrich Leads' to discover and verify emails.")
+                    self.results_text.insert(tk.END, "No email addresses found.\nClick '⚡ Batch Enrich All' to discover and verify emails.")
                     
             elif fmt == "urls":
                 urls = [item.get("URL", "") for item in data if item.get("URL")]
@@ -2938,28 +3245,111 @@ class GoogleLeadScraperSuite(tk.Tk):
         selected_item = self.tree.selection()
         if not selected_item:
             return
-        idx = int(selected_item[0])
         data = self._get_filtered_data()
-        if 0 <= idx < len(data):
-            lead = data[idx]
-            self._enrich_single_lead_item(lead)
+        try:
+            idx = int(selected_item[0])
+            if 0 <= idx < len(data):
+                lead = data[idx]
+                self._enrich_single_lead_item(lead)
+        except Exception:
+            pass
 
     def _on_tree_select(self, event):
         pass
 
     def _enrich_selected_lead(self):
-        """Enriches the currently selected contact in the Treeview table."""
+        """Enriches all currently selected contacts in the Treeview table (single or multi-select)."""
         if not hasattr(self, "tree"):
             return
         selected = self.tree.selection()
         if not selected:
-            messagebox.showinfo("Select Contact", "Please click a contact in the table to select it, then click '⚡ Enrich Selected'.")
+            messagebox.showinfo("Select Contact(s)", "Please click on one or more contacts in the table.\n\n💡 Tip: You can hold Ctrl or Shift to select multiple rows, then click '⚡ Enrich Selected'.")
             return
-        idx = int(selected[0])
+            
         data = self._get_filtered_data()
-        if 0 <= idx < len(data):
-            lead = data[idx]
-            self._enrich_single_lead_item(lead)
+        selected_leads = []
+        for item_id in selected:
+            try:
+                idx = int(item_id)
+                if 0 <= idx < len(data):
+                    selected_leads.append(data[idx])
+            except (ValueError, IndexError):
+                pass
+                
+        if not selected_leads:
+            return
+            
+        if len(selected_leads) == 1:
+            self._enrich_single_lead_item(selected_leads[0])
+        else:
+            self._start_subset_enrich(selected_leads)
+
+    def _start_subset_enrich(self, leads_subset):
+        """Launches enrichment for a selected group of leads."""
+        if self.is_enriching:
+            messagebox.showwarning("Busy", "Enrichment is already in progress.")
+            return
+            
+        self.is_enriching = True
+        self.batch_enrich_btn.configure(state=tk.DISABLED)
+        self.single_enrich_btn.configure(state=tk.DISABLED)
+        self.status_var.set(f"⚡ Starting Email Enrichment for {len(leads_subset)} selected contacts...")
+        
+        threading.Thread(target=self._subset_enrich_worker, args=(leads_subset,), daemon=True).start()
+
+    def _subset_enrich_worker(self, leads_subset):
+        provider = self.enrich_provider_var.get()
+        api_key = self.enrich_api_key_var.get().strip()
+        pattern = self.enrich_pattern_var.get()
+        industry = self.enrich_industry_var.get()
+        custom_dom = self.enrich_custom_domain_var.get().strip()
+        
+        total = len(leads_subset)
+        valid_count = 0
+        risky_count = 0
+        not_found_count = 0
+        
+        for idx, lead in enumerate(leads_subset, 1):
+            if not self.is_enriching:
+                break
+                
+            self.after(0, self.status_var.set, f"⚡ Enriching selected lead {idx} of {total} ({int((idx/total)*100)}%)...")
+            
+            res = api_enrich_lead(lead, provider=provider, api_key=api_key, pattern=pattern, industry=industry, custom_domain=custom_dom)
+            
+            lead["First Name"] = res["First Name"]
+            lead["Last Name"] = res["Last Name"]
+            lead["Domain"] = res["Domain"]
+            lead["Enriched Email"] = res["Enriched Email"]
+            lead["Deliverability"] = res["Deliverability"]
+            lead["Deliverability Badge"] = res["Deliverability Badge"]
+            lead["MX Server"] = res["MX Server"]
+            
+            if "Valid" in res["Deliverability"]:
+                valid_count += 1
+            elif "Risky" in res["Deliverability"]:
+                risky_count += 1
+            else:
+                not_found_count += 1
+                
+            if idx % 2 == 0 or idx == total:
+                self.after(0, self._refresh_text_display)
+                
+            time.sleep(0.04)
+            
+        self.is_enriching = False
+        self.after(0, self.batch_enrich_btn.configure, {"state": tk.NORMAL})
+        self.after(0, self.single_enrich_btn.configure, {"state": tk.NORMAL})
+        self.after(0, self._refresh_text_display)
+        self.after(0, self.status_var.set, f"✅ Enriched {total} selected leads! ({valid_count} MX verified)")
+        
+        self.after(0, messagebox.showinfo, "✅ Selected Leads Enriched",
+            f"✅ Finished Enriching {total} Selected Contacts!\n\n"
+            f"🟢 Valid (MX Verified): {valid_count}\n"
+            f"🟡 Risky / Unverified: {risky_count}\n"
+            f"⚪ Not Found: {not_found_count}\n\n"
+            f"Results have been updated in the table."
+        )
 
     def _enrich_single_lead_item(self, lead: dict):
         """Enriches a single lead dictionary and refreshes UI."""

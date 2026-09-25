@@ -22,11 +22,13 @@ try:
 except ImportError:
     SELENIUM_AVAILABLE = False
 
-# Try importing dnspython for MX verification
+# Try importing dnspython for MX verification with standard library fallback
 try:
+    import dns
     import dns.resolver
     DNS_RESOLVER_AVAILABLE = True
-except ImportError:
+except (ImportError, Exception):
+    dns = None
     DNS_RESOLVER_AVAILABLE = False
 
 
@@ -369,30 +371,34 @@ def verify_domain_mx(domain: str):
     if domain in _MX_CACHE:
         return _MX_CACHE[domain]
         
-    if not DNS_RESOLVER_AVAILABLE:
-        # Fallback if dnspython is missing
-        res = (True, "Valid (DNS Unverified)", [])
-        _MX_CACHE[domain] = res
-        return res
-        
-    try:
-        answers = dns.resolver.resolve(domain, 'MX', lifetime=4.0)
-        mx_list = [str(r.exchange).rstrip('.') for r in answers]
-        res = (True, "Valid (MX Verified)", mx_list)
-    except dns.resolver.NoAnswer:
-        # Domain exists, check if A record exists (some mail servers use A records)
+    if DNS_RESOLVER_AVAILABLE and dns is not None:
         try:
-            dns.resolver.resolve(domain, 'A', lifetime=3.0)
-            res = (True, "Risky (A Record Fallback)", [])
+            answers = dns.resolver.resolve(domain, 'MX', lifetime=4.0)
+            mx_list = [str(r.exchange).rstrip('.') for r in answers]
+            if mx_list:
+                res = (True, "Valid (MX Verified)", mx_list)
+                _MX_CACHE[domain] = res
+                return res
         except Exception:
-            res = (False, "Invalid (No MX)", [])
-    except (dns.resolver.NXDOMAIN, dns.resolver.LifetimeTimeout):
-        res = (False, "Invalid (Domain Unreachable)", [])
-    except Exception as e:
-        res = (False, f"Unverified ({str(e)[:25]})", [])
+            try:
+                dns.resolver.resolve(domain, 'A', lifetime=3.0)
+                res = (True, "Risky (A Record Fallback)", [])
+                _MX_CACHE[domain] = res
+                return res
+            except Exception:
+                pass
+                
+    # Standard library socket fallback (requires zero external packages)
+    try:
+        import socket
+        ip = socket.gethostbyname(domain)
+        res = (True, "Valid (Host Active)", [f"IP: {ip}"])
+    except Exception:
+        res = (False, "Invalid (Host Unreachable)", [])
         
     _MX_CACHE[domain] = res
     return res
+
 
 
 def synthesize_email(first_name: str, last_name: str, domain: str, pattern: str = "{first}.{last}@{domain}") -> str:

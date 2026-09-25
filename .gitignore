@@ -11,6 +11,9 @@ env/
 
 # Logs & Cache
 *.log
+*.log.*
+logs/
+log/
 search_history.log
 
 # Temporary & Rendered files

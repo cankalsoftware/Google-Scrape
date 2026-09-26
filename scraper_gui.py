@@ -533,6 +533,97 @@ def api_enrich_lead(lead_dict: dict, provider: str = "builtin", api_key: str = "
         }
 
 
+def reformat_email_string(email: str, pattern: str = "{first}{last}@{domain}", info: str = "", raw_row: dict = None) -> str:
+    """
+    Transforms an email address into a new naming pattern (e.g. ali.cankal@domain.com -> alicankal@domain.com or acankal@domain.com).
+    Extracts name parts from metadata, or decomposes the original email username.
+    """
+    if not email or "@" not in email:
+        return email
+    
+    parts = email.strip().split("@")
+    user_part = parts[0].strip().lower()
+    domain = parts[1].strip().lower()
+    
+    first = ""
+    last = ""
+    
+    # 1. Try to extract first and last name from raw_row dictionary if available
+    if raw_row and isinstance(raw_row, dict):
+        for k in ["First Name", "First_Name", "first_name", "firstname", "Forename"]:
+            if k in raw_row and raw_row[k]:
+                first = str(raw_row[k]).strip()
+                break
+        for k in ["Surname", "Last Name", "Last_Name", "last_name", "lastname", "Family_Name"]:
+            if k in raw_row and raw_row[k]:
+                last = str(raw_row[k]).strip()
+                break
+        if not (first and last):
+            for k in ["Name", "Full Name", "Full_Name", "full_name", "Contact"]:
+                if k in raw_row and raw_row[k]:
+                    f, l, _ = parse_lead_name(str(raw_row[k]))
+                    if f: first = f
+                    if l: last = l
+                    break
+
+    # 2. Try to extract from info string if still missing
+    if not (first and last) and info:
+        f, l, _ = parse_lead_name(info)
+        if f: first = f
+        if l: last = l
+
+    # 3. If still missing, parse username part before @
+    if not (first and last):
+        clean_u = re.sub(r'[^a-zA-Z0-9._-]', '', user_part)
+        if "." in clean_u:
+            u_parts = [p for p in clean_u.split(".") if p]
+            if len(u_parts) >= 2:
+                first = u_parts[0]
+                last = u_parts[-1]
+            elif len(u_parts) == 1:
+                first = u_parts[0]
+        elif "_" in clean_u:
+            u_parts = [p for p in clean_u.split("_") if p]
+            if len(u_parts) >= 2:
+                first = u_parts[0]
+                last = u_parts[-1]
+            elif len(u_parts) == 1:
+                first = u_parts[0]
+        elif "-" in clean_u:
+            u_parts = [p for p in clean_u.split("-") if p]
+            if len(u_parts) >= 2:
+                first = u_parts[0]
+                last = u_parts[-1]
+            elif len(u_parts) == 1:
+                first = u_parts[0]
+        else:
+            first = clean_u
+            last = ""
+
+    first_clean = re.sub(r'[^a-zA-Z0-9]', '', first.lower())
+    last_clean = re.sub(r'[^a-zA-Z0-9]', '', last.lower())
+    
+    f_init = first_clean[0] if first_clean else ""
+    l_init = last_clean[0] if last_clean else ""
+    
+    # Handle pattern evaluation
+    try:
+        new_email = pattern.format(
+            first=first_clean,
+            last=last_clean,
+            f=f_init,
+            l=l_init,
+            domain=domain
+        )
+        return new_email
+    except Exception:
+        if first_clean and last_clean:
+            return f"{first_clean}{last_clean}@{domain}"
+        elif first_clean:
+            return f"{first_clean}@{domain}"
+        return email
+
+
 def verify_email_smtp_handshake(email: str, timeout: int = 8, check_catchall: bool = False) -> dict:
     """
     Performs full DNS MX resolution + SMTP Handshake verification (HELO -> MAIL FROM -> RCPT TO).
@@ -667,6 +758,115 @@ def verify_email_smtp_handshake(email: str, timeout: int = 8, check_catchall: bo
         "deliverable": is_deliverable,
         "details": smtp_msg,
         "response_time_ms": int((time.time() - start_time) * 1000)
+    }
+
+
+DEFAULT_WATERFALL_PATTERNS = [
+    ("{first}.{last}@{domain}", "first.last"),
+    ("{first}{last}@{domain}", "firstlast (no dot)"),
+    ("{f}{last}@{domain}", "flast (initial+last)"),
+    ("{first}_{last}@{domain}", "first_last (underscore)"),
+    ("{last}.{first}@{domain}", "last.first"),
+    ("{last}{first}@{domain}", "lastfirst"),
+    ("{last}{f}@{domain}", "lastf (last+initial)"),
+    ("{first}@{domain}", "first only"),
+    ("{f}.{last}@{domain}", "f.last (initial.last)")
+]
+
+
+def verify_email_waterfall_permutations(
+    email: str,
+    raw_row: dict = None,
+    info: str = "",
+    timeout: int = 8,
+    check_catchall: bool = False,
+    patterns: list = None
+) -> dict:
+    """
+    Tests an email across all naming permutations in an automated waterfall sequence:
+    Tries 1) first.last -> 2) firstlast -> 3) flast -> 4) first_last -> 5) last.first -> 6) lastf ...
+    As soon as ANY permutation returns 250 OK (Deliverable), immediately returns that winning email!
+    If all permutations return 550 or fail, marks as Undeliverable.
+    """
+    if patterns is None:
+        patterns = DEFAULT_WATERFALL_PATTERNS
+
+    clean_orig = str(email).strip()
+    if not clean_orig or "@" not in clean_orig:
+        return {
+            "email": clean_orig,
+            "original_email": clean_orig,
+            "domain": "",
+            "mx_host": "None",
+            "smtp_code": 0,
+            "status": "Invalid Format",
+            "badge": "⚪ Invalid Email",
+            "deliverable": False,
+            "permutations_tested": 0,
+            "details": "Malformed email address",
+            "response_time_ms": 0
+        }
+
+    # Generate unique candidate emails in prioritized order
+    candidates = []
+    seen = set()
+    
+    # 1. First candidate is the original input email
+    candidates.append((clean_orig, "original"))
+    seen.add(clean_orig.lower())
+    
+    # 2. Add waterfall permutations
+    for pat_fmt, pat_label in patterns:
+        cand = reformat_email_string(clean_orig, pattern=pat_fmt, info=info, raw_row=raw_row)
+        cand_clean = cand.strip()
+        if cand_clean and cand_clean.lower() not in seen and "@" in cand_clean:
+            seen.add(cand_clean.lower())
+            candidates.append((cand_clean, pat_label))
+
+    last_res = None
+    tested_count = 0
+    start_all = time.time()
+
+    for cand_email, cand_label in candidates:
+        tested_count += 1
+        res = verify_email_smtp_handshake(cand_email, timeout=timeout, check_catchall=check_catchall)
+        last_res = res
+        
+        # If Deliverable (250 OK) or Catch-All
+        if res.get("deliverable"):
+            return {
+                "email": cand_email,
+                "original_email": clean_orig,
+                "winning_pattern": cand_label,
+                "domain": res["domain"],
+                "mx_host": res["mx_host"],
+                "smtp_code": res["smtp_code"],
+                "status": f"Deliverable (250 OK - Format: {cand_label})",
+                "badge": "🟢 Deliverable",
+                "deliverable": True,
+                "permutations_tested": tested_count,
+                "details": f"Auto-discovered working format '{cand_label}' on test #{tested_count}/{len(candidates)}: {res['details']}",
+                "response_time_ms": int((time.time() - start_all) * 1000)
+            }
+            
+        # If DNS MX completely failed, stop testing further permutations
+        if "No MX" in res.get("status", "") or "Domain Not Found" in res.get("status", ""):
+            break
+
+    # If all permutations failed:
+    return {
+        "email": clean_orig,
+        "original_email": clean_orig,
+        "winning_pattern": "none",
+        "domain": last_res["domain"] if last_res else clean_orig.split("@")[1],
+        "mx_host": last_res["mx_host"] if last_res else "None",
+        "smtp_code": last_res["smtp_code"] if last_res else 550,
+        "status": f"Undeliverable (All {tested_count} Formats Failed)",
+        "badge": f"🔴 Undeliverable ({tested_count} Failed)",
+        "deliverable": False,
+        "permutations_tested": tested_count,
+        "details": f"Tested {tested_count} candidate formats ({', '.join([c[1] for c in candidates[:4]])}...) — all rejected with 550 / mailbox not found.",
+        "response_time_ms": int((time.time() - start_all) * 1000)
     }
 
 
@@ -887,6 +1087,7 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.verifier_selected_col_var = tk.StringVar(value="")
         self.verifier_timeout_var = tk.IntVar(value=8)
         self.verifier_catchall_var = tk.BooleanVar(value=False)
+        self.verifier_waterfall_var = tk.BooleanVar(value=True)
         self.verifier_filter_var = tk.StringVar(value="")
 
         # Start Local Enrichment REST Server in background thread
@@ -2153,7 +2354,11 @@ class GoogleLeadScraperSuite(tk.Tk):
         ToolTip(self.v_start_btn, "Tests DNS MX records and initiates direct SMTP handshakes for all loaded emails.")
         
         self.v_stop_btn = ttk.Button(ctl_row1, text="⏹ Stop", style="Danger.TButton", command=self._stop_email_verification, state=tk.DISABLED)
-        self.v_stop_btn.pack(side=tk.LEFT, padx=(0, 15))
+        self.v_stop_btn.pack(side=tk.LEFT, padx=(0, 12))
+        
+        self.v_reformat_btn = ttk.Button(ctl_row1, text="🔄 Reformat & Retry Undeliverables...", style="Accent.TButton", command=lambda: self._open_reformat_retry_window("undeliverables"))
+        self.v_reformat_btn.pack(side=tk.LEFT, padx=(0, 15))
+        ToolTip(self.v_reformat_btn, "Open modal to reformat undeliverable emails (e.g. without dot 'alicankal' or 'acankal') and test live deliverability.")
         
         lbl_tout = ttk.Label(ctl_row1, text="Timeout (sec):")
         lbl_tout.pack(side=tk.LEFT, padx=(0, 4))
@@ -2163,8 +2368,12 @@ class GoogleLeadScraperSuite(tk.Tk):
         ToolTip(tout_spin, "SMTP handshake connection timeout in seconds (8s is recommended).")
         
         chk_call = ttk.Checkbutton(ctl_row1, text="Detect Catch-All Mailboxes", variable=self.verifier_catchall_var)
-        chk_call.pack(side=tk.LEFT, padx=(0, 15))
+        chk_call.pack(side=tk.LEFT, padx=(0, 12))
         ToolTip(chk_call, "Tests a randomized non-existent address on the domain to detect catch-all mail servers.")
+        
+        chk_waterfall = ttk.Checkbutton(ctl_row1, text="⚡ Auto-Waterfall Retry on 550", variable=self.verifier_waterfall_var)
+        chk_waterfall.pack(side=tk.LEFT, padx=(0, 15))
+        ToolTip(chk_waterfall, "When enabled, if an email returns 550 (mailbox not found), automatically tests alternate formats (firstlast, flast, underscore, etc.) in a waterfall until a deliverable mailbox is found!")
         
         self.v_export_csv_btn = ttk.Button(ctl_row1, text="💾 Export Verified CSV", style="Success.TButton", command=self._export_verified_csv)
         self.v_export_csv_btn.pack(side=tk.RIGHT, padx=(4, 0))
@@ -2258,6 +2467,9 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.v_tree_menu.add_command(label="🔍 Inspect Full Handshake Details", command=lambda: self._on_verifier_row_double_click(None))
         self.v_tree_menu.add_command(label="✉️ Copy Email Address", command=self._copy_selected_verifier_email)
         self.v_tree_menu.add_command(label="📋 Copy Row Details", command=self._copy_selected_verifier_row)
+        self.v_tree_menu.add_separator()
+        self.v_tree_menu.add_command(label="🔄 Reformat & Retry Selected Email(s)...", command=lambda: self._open_reformat_retry_window("selected"))
+        self.v_tree_menu.add_command(label="🔄 Reformat & Retry All Undeliverables...", command=lambda: self._open_reformat_retry_window("undeliverables"))
         
         self.verifier_tree.bind("<Button-3>", self._show_verifier_context_menu)
 
@@ -2459,12 +2671,14 @@ class GoogleLeadScraperSuite(tk.Tk):
             timeout = 8
             
         catchall = self.verifier_catchall_var.get()
+        use_waterfall = self.verifier_waterfall_var.get() if hasattr(self, "verifier_waterfall_var") else True
         total = len(self.verifier_data)
         
         deliverable_cnt = 0
         risky_cnt = 0
         undeliverable_cnt = 0
         errors_cnt = 0
+        discovered_cnt = 0
         
         for idx, item in enumerate(self.verifier_data, 1):
             if self.verifier_stop_requested:
@@ -2473,7 +2687,20 @@ class GoogleLeadScraperSuite(tk.Tk):
             target_email = item.get("email", "")
             self.after(0, self.status_var.set, f"🛡️ Verifying ({idx}/{total}): {target_email}...")
             
-            res = verify_email_smtp_handshake(target_email, timeout=timeout, check_catchall=catchall)
+            if use_waterfall:
+                res = verify_email_waterfall_permutations(
+                    target_email,
+                    raw_row=item.get("raw_row"),
+                    info=item.get("info", ""),
+                    timeout=timeout,
+                    check_catchall=catchall
+                )
+                if res.get("deliverable"):
+                    if res["email"].lower() != target_email.lower():
+                        discovered_cnt += 1
+                    item["email"] = res["email"]  # Set to working format!
+            else:
+                res = verify_email_smtp_handshake(target_email, timeout=timeout, check_catchall=catchall)
             
             item["domain"] = res["domain"]
             item["mx_host"] = res["mx_host"]
@@ -2508,14 +2735,17 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.after(0, self.v_start_btn.configure, {"state": tk.NORMAL})
         self.after(0, self.v_stop_btn.configure, {"state": tk.DISABLED})
         self.after(0, self._refresh_verifier_display)
-        self.after(0, self.status_var.set, f"✅ Verification complete: {deliverable_cnt} deliverable, {undeliverable_cnt} undeliverable.")
+        self.after(0, self.status_var.set, f"✅ Verification complete: {deliverable_cnt} deliverable ({discovered_cnt} auto-discovered), {undeliverable_cnt} undeliverable.")
         
+        disc_msg = f"\n✨ Auto-Waterfall successfully recovered/discovered {discovered_cnt} deliverable mailbox formats!" if discovered_cnt > 0 else ""
+        reformat_tip = f"\n\n💡 Tip: Click '🔄 Reformat & Retry Undeliverables...' to test custom patterns on failed addresses." if undeliverable_cnt > 0 else ""
         self.after(0, messagebox.showinfo, "✅ Verification Finished",
             f"✅ Deliverability & SMTP Handshake Complete!\n\n"
             f"Total Processed: {total}\n"
-            f"🟢 Deliverable (250 OK): {deliverable_cnt}\n"
+            f"🟢 Deliverable (250 OK): {deliverable_cnt}{disc_msg}\n"
             f"🟡 Risky / Catch-All / Greylisted: {risky_cnt}\n"
-            f"🔴 Undeliverable (550 / No MX): {undeliverable_cnt}\n\n"
+            f"🔴 Undeliverable (550 / No MX): {undeliverable_cnt}"
+            f"{reformat_tip}\n\n"
             f"Click '💾 Export Verified CSV' to save your verified file."
         )
 
@@ -2768,6 +2998,602 @@ class GoogleLeadScraperSuite(tk.Tk):
             messagebox.showinfo("Export Successful", f"Successfully exported {len(self.verifier_data)} verified contacts to:\n\n{filepath}")
         except Exception as e:
             messagebox.showerror("Export Error", f"Could not save file:\n{e}")
+
+    def _open_reformat_retry_window(self, initial_scope="undeliverables"):
+        """
+        Opens a dedicated modal dialog for reformatting undeliverable/risky/selected emails
+        (e.g., removing dots 'ali.cankal' -> 'alicankal', or changing to 'acankal', 'ali_cankal', etc.)
+        and re-verifying live DNS MX and SMTP Handshake deliverability.
+        """
+        if not self.verifier_data:
+            messagebox.showinfo("No Records", "Please import a CSV file or paste email addresses into the Verifier first.")
+            return
+
+        dialog = tk.Toplevel(self)
+        dialog.title("🔄 Email Pattern Reformatting & Retry Studio")
+        dialog.geometry("1060x730")
+        dialog.minsize(880, 600)
+        dialog.transient(self)
+        dialog.configure(bg="#F1F5F9")
+
+        # Dialog State
+        scope_var = tk.StringVar(value=initial_scope)
+        pattern_formula_var = tk.StringVar(value="{first}{last}@{domain}")
+        custom_pattern_var = tk.StringVar(value="{f}{last}@{domain}")
+        dialog_filter_var = tk.StringVar(value="")
+        dialog_is_running = [False]
+        dialog_stop_requested = [False]
+        dialog_records = []  # items in dialog
+
+        # Header Frame
+        top_frame = ttk.Frame(dialog, padding="10")
+        top_frame.pack(fill=tk.X)
+
+        lbl_title = ttk.Label(top_frame, text="🔄 Email Pattern Reformatting & Retry Studio", font=("Segoe UI", 13, "bold"), foreground="#0F172A")
+        lbl_title.pack(anchor=tk.W)
+
+        lbl_sub = ttk.Label(top_frame, text="Reformat undeliverable email addresses into alternate corporate formats (e.g. without dot 'alicankal', 'acankal', 'ali_cankal') and test live MX/SMTP deliverability.", font=("Segoe UI", 9), foreground="#64748B")
+        lbl_sub.pack(anchor=tk.W, pady=(1, 4))
+
+        # 1. Target Scope & Pattern Options Frame
+        ctrl_frame = ttk.LabelFrame(dialog, text=" 🎯 1. Select Target Scope & New Email Formula ", padding="8")
+        ctrl_frame.pack(fill=tk.X, padx=10, pady=(0, 6))
+
+        # Row A: Scope Selector
+        row_scope = ttk.Frame(ctrl_frame)
+        row_scope.pack(fill=tk.X, pady=(0, 6))
+
+        lbl_sc = ttk.Label(row_scope, text="Target Scope:", font=("Segoe UI", 9, "bold"), width=14)
+        lbl_sc.pack(side=tk.LEFT)
+
+        r_undeliv = ttk.Radiobutton(row_scope, text="🔴 Undeliverables (550 / No MX)", value="undeliverables", variable=scope_var, command=lambda: populate_records())
+        r_undeliv.pack(side=tk.LEFT, padx=(0, 12))
+
+        r_risky = ttk.Radiobutton(row_scope, text="🟡 Risky / Catch-All / Greylisted", value="risky", variable=scope_var, command=lambda: populate_records())
+        r_risky.pack(side=tk.LEFT, padx=(0, 12))
+
+        r_sel = ttk.Radiobutton(row_scope, text="📋 Selected in Table", value="selected", variable=scope_var, command=lambda: populate_records())
+        r_sel.pack(side=tk.LEFT, padx=(0, 12))
+
+        r_all = ttk.Radiobutton(row_scope, text="🌐 All Loaded Records", value="all", variable=scope_var, command=lambda: populate_records())
+        r_all.pack(side=tk.LEFT, padx=(0, 12))
+
+        scope_count_lbl = ttk.Label(row_scope, text="0 records targeted", font=("Segoe UI", 9, "bold"), foreground="#2563EB")
+        scope_count_lbl.pack(side=tk.RIGHT)
+
+        # Row B: Pattern Presets
+        row_patterns = ttk.Frame(ctrl_frame)
+        row_patterns.pack(fill=tk.X, pady=(0, 4))
+
+        lbl_pat = ttk.Label(row_patterns, text="New Pattern:", font=("Segoe UI", 9, "bold"), width=14)
+        lbl_pat.pack(side=tk.LEFT)
+
+        patterns = [
+            ("🔘 No Dot: {first}{last} (e.g. alicankal@domain)", "{first}{last}@{domain}"),
+            ("🔘 First Initial + Last: {f}{last} (e.g. acankal@domain)", "{f}{last}@{domain}"),
+            ("🔘 Standard Dot: {first}.{last} (e.g. ali.cankal@domain)", "{first}.{last}@{domain}"),
+            ("🔘 Underscore: {first}_{last} (e.g. ali_cankal@domain)", "{first}_{last}@{domain}"),
+            ("🔘 Last.First: {last}.{first} (e.g. cankal.ali@domain)", "{last}.{first}@{domain}"),
+            ("🔘 LastFirst: {last}{first} (e.g. cankalali@domain)", "{last}{first}@{domain}"),
+            ("🔘 Last + Initial: {last}{f} (e.g. cankala@domain)", "{last}{f}@{domain}"),
+            ("🔘 First Name Only: {first} (e.g. ali@domain)", "{first}@{domain}"),
+            ("🔘 Initial.Last: {f}.{last} (e.g. a.cankal@domain)", "{f}.{last}@{domain}"),
+            ("🔘 Custom Formula...", "custom")
+        ]
+
+        pattern_combo = ttk.Combobox(row_patterns, values=[p[0] for p in patterns], state="readonly", width=48)
+        pattern_combo.current(0)
+        pattern_combo.pack(side=tk.LEFT, padx=(0, 10))
+
+        custom_entry = ttk.Entry(row_patterns, textvariable=custom_pattern_var, font=("Segoe UI", 9), width=24)
+        custom_entry.pack(side=tk.LEFT, padx=(0, 10))
+        custom_entry.configure(state=tk.DISABLED)
+
+        def on_pattern_changed(event=None):
+            sel_idx = pattern_combo.current()
+            if sel_idx < 0: sel_idx = 0
+            label, pval = patterns[sel_idx]
+            if pval == "custom":
+                custom_entry.configure(state=tk.NORMAL)
+                pattern_formula_var.set(custom_pattern_var.get().strip() or "{f}{last}@{domain}")
+            else:
+                custom_entry.configure(state=tk.DISABLED)
+                pattern_formula_var.set(pval)
+            apply_pattern_transformation()
+
+        pattern_combo.bind("<<ComboboxSelected>>", on_pattern_changed)
+        custom_pattern_var.trace_add("write", lambda *args: on_custom_pattern_typed())
+
+        def on_custom_pattern_typed():
+            if pattern_combo.current() == len(patterns) - 1:
+                pattern_formula_var.set(custom_pattern_var.get().strip() or "{first}{last}@{domain}")
+                apply_pattern_transformation()
+
+        # Row C: Quick Preset Buttons
+        row_quick = ttk.Frame(ctrl_frame)
+        row_quick.pack(fill=tk.X, pady=(2, 0))
+
+        lbl_qk = ttk.Label(row_quick, text="Quick Presets:", width=14, foreground="#64748B")
+        lbl_qk.pack(side=tk.LEFT)
+
+        def set_preset_quick(idx):
+            pattern_combo.current(idx)
+            on_pattern_changed()
+
+        btn_q1 = ttk.Button(row_quick, text="⚡ 'alicankal' (No Dot)", style="Secondary.TButton", command=lambda: set_preset_quick(0))
+        btn_q1.pack(side=tk.LEFT, padx=(0, 6))
+
+        btn_q2 = ttk.Button(row_quick, text="⚡ 'acankal' (Initial+Last)", style="Secondary.TButton", command=lambda: set_preset_quick(1))
+        btn_q2.pack(side=tk.LEFT, padx=(0, 6))
+
+        btn_q3 = ttk.Button(row_quick, text="⚡ 'ali_cankal' (Underscore)", style="Secondary.TButton", command=lambda: set_preset_quick(3))
+        btn_q3.pack(side=tk.LEFT, padx=(0, 6))
+
+        btn_q4 = ttk.Button(row_quick, text="⚡ 'cankal.ali' (Last.First)", style="Secondary.TButton", command=lambda: set_preset_quick(4))
+        btn_q4.pack(side=tk.LEFT, padx=(0, 6))
+
+        # 2. Execution & Live Actions Bar
+        act_frame = ttk.LabelFrame(dialog, text=" ⚡ 2. Verify Reformatted Emails & Apply Actions ", padding="8")
+        act_frame.pack(fill=tk.X, padx=10, pady=(0, 6))
+
+        act_r1 = ttk.Frame(act_frame)
+        act_r1.pack(fill=tk.X, pady=(0, 4))
+
+        btn_verify_reformat = ttk.Button(act_r1, text="🚀 Verify Current Pattern", style="Primary.TButton")
+        btn_verify_reformat.pack(side=tk.LEFT, padx=(0, 8))
+
+        btn_waterfall_all = ttk.Button(act_r1, text="✨ 1-Click Auto-Waterfall All Formats", style="Success.TButton")
+        btn_waterfall_all.pack(side=tk.LEFT, padx=(0, 10))
+        ToolTip(btn_waterfall_all, "Automatically cycles through ALL naming formats (firstlast, flast, underscore, etc.) for each person until a deliverable mailbox is discovered!")
+
+        btn_stop_reformat = ttk.Button(act_r1, text="⏹ Stop", style="Danger.TButton", state=tk.DISABLED)
+        btn_stop_reformat.pack(side=tk.LEFT, padx=(0, 15))
+
+        btn_apply_main = ttk.Button(act_r1, text="📥 Apply & Update Main Table", style="Success.TButton")
+        btn_apply_main.pack(side=tk.RIGHT, padx=(4, 0))
+        ToolTip(btn_apply_main, "Replaces matching records in the main Verifier table with these newly formatted/verified emails.")
+
+        btn_export_dialog_csv = ttk.Button(act_r1, text="💾 Export Reformatted CSV", style="Secondary.TButton")
+        btn_export_dialog_csv.pack(side=tk.RIGHT, padx=(4, 0))
+
+        btn_copy_dialog_valid = ttk.Button(act_r1, text="✉️ Copy Deliverable", style="Secondary.TButton")
+        btn_copy_dialog_valid.pack(side=tk.RIGHT, padx=(4, 0))
+
+        act_r2 = ttk.Frame(act_frame)
+        act_r2.pack(fill=tk.X, pady=(2, 0))
+
+        d_prog = ttk.Progressbar(act_r2, orient="horizontal", mode="determinate", length=200)
+        d_prog.pack(side=tk.LEFT, padx=(0, 10), fill=tk.X, expand=True)
+
+        d_stats_lbl = ttk.Label(act_r2, text="Total: 0 | 🟢 Deliverable: 0 | 🔴 Undeliverable: 0", font=("Segoe UI", 9, "bold"), foreground="#2563EB")
+        d_stats_lbl.pack(side=tk.RIGHT)
+
+        # 3. Live Preview & Results Table
+        table_container = ttk.Frame(dialog, padding="10")
+        table_container.pack(fill=tk.BOTH, expand=True)
+
+        # Filter bar
+        tbl_top_bar = ttk.Frame(table_container)
+        tbl_top_bar.pack(fill=tk.X, pady=(0, 4))
+
+        lbl_f = ttk.Label(tbl_top_bar, text="Filter List:")
+        lbl_f.pack(side=tk.LEFT, padx=(0, 4))
+
+        d_filter_entry = ttk.Entry(tbl_top_bar, textvariable=dialog_filter_var, font=("Segoe UI", 9), width=22)
+        d_filter_entry.pack(side=tk.LEFT, padx=(0, 8))
+        d_filter_entry.bind("<KeyRelease>", lambda e: refresh_dialog_display())
+
+        lbl_hint = ttk.Label(tbl_top_bar, text="💡 Double-click any row to view full server SMTP handshake response.", foreground="#64748B", font=("Segoe UI", 8, "italic"))
+        lbl_hint.pack(side=tk.LEFT)
+
+        d_tree_frame = ttk.Frame(table_container)
+        d_tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        d_cols = ("#", "orig_email", "prev_status", "new_email", "new_status", "mx_host", "smtp_code", "latency")
+        d_col_titles = {
+            "#": "#",
+            "orig_email": "Original Email",
+            "prev_status": "Previous Status",
+            "new_email": "➡️ Reformatted Email (New)",
+            "new_status": "New Verification Status",
+            "mx_host": "MX Host",
+            "smtp_code": "Code",
+            "latency": "Latency"
+        }
+
+        d_tree = ttk.Treeview(d_tree_frame, columns=d_cols, show="headings", selectmode="extended")
+        for col in d_cols:
+            d_tree.heading(col, text=d_col_titles[col])
+
+        d_tree.column("#", width=36, minwidth=30, anchor="center")
+        d_tree.column("orig_email", width=200, minwidth=130, anchor="w")
+        d_tree.column("prev_status", width=150, minwidth=100, anchor="w")
+        d_tree.column("new_email", width=220, minwidth=140, anchor="w")
+        d_tree.column("new_status", width=180, minwidth=120, anchor="w")
+        d_tree.column("mx_host", width=150, minwidth=100, anchor="w")
+        d_tree.column("smtp_code", width=60, minwidth=45, anchor="center")
+        d_tree.column("latency", width=70, minwidth=50, anchor="center")
+
+        d_vsb = ttk.Scrollbar(d_tree_frame, orient="vertical", command=d_tree.yview)
+        d_hsb = ttk.Scrollbar(d_tree_frame, orient="horizontal", command=d_tree.xview)
+        d_tree.configure(yscrollcommand=d_vsb.set, xscrollcommand=d_hsb.set)
+
+        d_tree.grid(row=0, column=0, sticky=tk.NSEW)
+        d_vsb.grid(row=0, column=1, sticky=tk.NS)
+        d_hsb.grid(row=1, column=0, sticky=tk.EW)
+
+        d_tree_frame.rowconfigure(0, weight=1)
+        d_tree_frame.columnconfigure(0, weight=1)
+
+        d_tree.tag_configure("deliverable", background="#ECFDF5", foreground="#065F46")
+        d_tree.tag_configure("risky", background="#FFFBEB", foreground="#92400E")
+        d_tree.tag_configure("undeliverable", background="#FEF2F2", foreground="#991B1B")
+        d_tree.tag_configure("pending", background="#FFFFFF", foreground="#0F172A")
+
+        def populate_records():
+            dialog_records.clear()
+            sc = scope_var.get()
+            selected_iids = self.verifier_tree.selection() if hasattr(self, "verifier_tree") else []
+            filtered_main = self._get_filtered_verifier_data()
+
+            for idx, item in enumerate(self.verifier_data):
+                st = item.get("status", "")
+                include = False
+                if sc == "undeliverables":
+                    if "Undeliverable" in st or "No MX" in st or "Invalid" in st or "Failed" in st:
+                        include = True
+                elif sc == "risky":
+                    if "Risky" in st or "Catch-All" in st or "Greylisted" in st or "MX Active" in st:
+                        include = True
+                elif sc == "selected":
+                    for sid in selected_iids:
+                        try:
+                            s_idx = int(sid)
+                            if s_idx < len(filtered_main) and filtered_main[s_idx].get("id") == item.get("id"):
+                                include = True
+                                break
+                        except Exception:
+                            pass
+                else:  # all
+                    include = True
+
+                if include:
+                    dialog_records.append({
+                        "id": len(dialog_records) + 1,
+                        "orig_item": item,
+                        "orig_email": item.get("email", ""),
+                        "prev_status": item.get("status", ""),
+                        "info": item.get("info", ""),
+                        "raw_row": item.get("raw_row", {}),
+                        "new_email": "",
+                        "new_status": "Ready to verify",
+                        "badge": "⚪ Pending",
+                        "mx_host": item.get("mx_host", "-"),
+                        "smtp_code": "-",
+                        "deliverable": False,
+                        "latency": 0,
+                        "details": ""
+                    })
+
+            if not dialog_records and sc == "undeliverables":
+                # If no undeliverables found, fallback to all records
+                scope_var.set("all")
+                populate_records()
+                return
+
+            scope_count_lbl.configure(text=f"{len(dialog_records)} records targeted")
+            apply_pattern_transformation()
+
+        def apply_pattern_transformation():
+            pat = pattern_formula_var.get()
+            for r in dialog_records:
+                r["new_email"] = reformat_email_string(
+                    r["orig_email"],
+                    pattern=pat,
+                    info=r.get("info", ""),
+                    raw_row=r.get("raw_row")
+                )
+            refresh_dialog_display()
+
+        def refresh_dialog_display():
+            for item in d_tree.get_children():
+                d_tree.delete(item)
+
+            filt = dialog_filter_var.get().lower().strip()
+            deliv_c = 0
+            undeliv_c = 0
+
+            for idx, r in enumerate(dialog_records, 1):
+                if filt:
+                    comb = f"{r.get('orig_email', '')} {r.get('new_email', '')} {r.get('new_status', '')} {r.get('mx_host', '')}".lower()
+                    if filt not in comb:
+                        continue
+
+                st = r.get("new_status", "")
+                if "Deliverable" in st:
+                    tag = "deliverable"
+                    deliv_c += 1
+                elif "Catch-All" in st or "Risky" in st or "Greylisted" in st or "MX Active" in st:
+                    tag = "risky"
+                elif "Undeliverable" in st or "No MX" in st:
+                    tag = "undeliverable"
+                    undeliv_c += 1
+                else:
+                    tag = "pending"
+
+                lat_str = f"{r.get('latency', 0)} ms" if r.get('latency') else "-"
+                d_tree.insert(
+                    "",
+                    tk.END,
+                    iid=str(idx - 1),
+                    values=(
+                        idx,
+                        r.get("orig_email", "-"),
+                        r.get("prev_status", "-"),
+                        r.get("new_email", "-"),
+                        r.get("new_status", "-"),
+                        r.get("mx_host", "-"),
+                        r.get("smtp_code", "-"),
+                        lat_str
+                    ),
+                    tags=(tag,)
+                )
+
+            d_stats_lbl.configure(text=f"Total: {len(dialog_records)} | 🟢 Deliverable: {deliv_c} | 🔴 Undeliverable: {undeliv_c}")
+
+        def start_dialog_verification():
+            if not dialog_records:
+                messagebox.showwarning("No Records", "No records targeted to verify.", parent=dialog)
+                return
+            if dialog_is_running[0]:
+                return
+
+            dialog_is_running[0] = True
+            dialog_stop_requested[0] = False
+            btn_verify_reformat.configure(state=tk.DISABLED)
+            btn_stop_reformat.configure(state=tk.NORMAL)
+            d_prog.configure(value=0)
+
+            threading.Thread(target=run_dialog_worker, daemon=True).start()
+
+        def stop_dialog_verification():
+            if dialog_is_running[0]:
+                dialog_stop_requested[0] = True
+
+        def run_dialog_worker():
+            try:
+                tout = int(self.verifier_timeout_var.get()) if hasattr(self, "verifier_timeout_var") else 8
+            except Exception:
+                tout = 8
+            catchall = self.verifier_catchall_var.get() if hasattr(self, "verifier_catchall_var") else False
+
+            total = len(dialog_records)
+            deliv_c = 0
+            undeliv_c = 0
+            risky_c = 0
+
+            for idx, item in enumerate(dialog_records, 1):
+                if dialog_stop_requested[0]:
+                    break
+
+                target_email = item.get("new_email", "")
+                res = verify_email_smtp_handshake(target_email, timeout=tout, check_catchall=catchall)
+
+                item["new_status"] = res["status"]
+                item["badge"] = res["badge"]
+                item["mx_host"] = res["mx_host"]
+                item["smtp_code"] = str(res["smtp_code"]) if res["smtp_code"] else "-"
+                item["deliverable"] = res["deliverable"]
+                item["latency"] = res["response_time_ms"]
+                item["details"] = res["details"]
+
+                if "Deliverable" in res["status"]:
+                    deliv_c += 1
+                elif "Undeliverable" in res["status"] or "No MX" in res["status"]:
+                    undeliv_c += 1
+                else:
+                    risky_c += 1
+
+                progress_pct = int((idx / total) * 100)
+                dialog.after(0, d_prog.configure, {"value": progress_pct})
+                dialog.after(0, d_stats_lbl.configure, {
+                    "text": f"Total: {total} | 🟢 Deliverable: {deliv_c} | 🟡 Risky: {risky_c} | 🔴 Undeliverable: {undeliv_c}"
+                })
+
+                if idx % 2 == 0 or idx == total:
+                    dialog.after(0, refresh_dialog_display)
+                time.sleep(0.02)
+
+            dialog_is_running[0] = False
+            dialog.after(0, btn_verify_reformat.configure, {"state": tk.NORMAL})
+            dialog.after(0, btn_stop_reformat.configure, {"state": tk.DISABLED})
+            dialog.after(0, refresh_dialog_display)
+            dialog.after(0, messagebox.showinfo, "✅ Reformat Verification Finished",
+                f"✅ Reformatted Email Verification Finished!\n\n"
+                f"Total Tested: {total}\n"
+                f"🟢 Deliverable (250 OK): {deliv_c}\n"
+                f"🟡 Risky / Catch-All: {risky_c}\n"
+                f"🔴 Undeliverable: {undeliv_c}\n\n"
+                f"Click '📥 Apply & Update Main Table' to replace with deliverable emails.",
+                parent=dialog
+            )
+
+        def apply_to_main_table():
+            applied_cnt = 0
+            for r in dialog_records:
+                orig_item = r.get("orig_item")
+                if orig_item and r.get("new_email"):
+                    orig_item["email"] = r["new_email"]
+                    if r.get("new_status") != "Ready to verify":
+                        orig_item["status"] = r["new_status"]
+                        orig_item["badge"] = r["badge"]
+                        orig_item["mx_host"] = r["mx_host"]
+                        orig_item["smtp_code"] = r["smtp_code"]
+                        orig_item["deliverable"] = r["deliverable"]
+                        orig_item["response_time_ms"] = r["latency"]
+                        orig_item["details"] = r["details"]
+                    applied_cnt += 1
+
+            self._refresh_verifier_display()
+            self.status_var.set(f"✅ Applied {applied_cnt} reformatted email(s) to the main Verifier table.")
+            messagebox.showinfo("Applied", f"Successfully updated {applied_cnt} records in the main Verifier table!", parent=dialog)
+
+        def export_dialog_csv():
+            if not dialog_records:
+                messagebox.showwarning("No Data", "No records to export.", parent=dialog)
+                return
+
+            filepath = filedialog.asksaveasfilename(
+                title="Save Reformatted Emails CSV",
+                defaultextension=".csv",
+                filetypes=[("CSV Files (*.csv)", "*.csv"), ("All Files (*.*)", "*.*")],
+                initialfile="reformatted_verified_emails.csv",
+                parent=dialog
+            )
+            if not filepath:
+                return
+
+            try:
+                with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
+                    fieldnames = ["#", "Original_Email", "Previous_Status", "Reformatted_Email", "New_Status", "MX_Host", "SMTP_Code", "Latency_MS", "Handshake_Details"]
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    for idx, r in enumerate(dialog_records, 1):
+                        writer.writerow({
+                            "#": idx,
+                            "Original_Email": r.get("orig_email", ""),
+                            "Previous_Status": r.get("prev_status", ""),
+                            "Reformatted_Email": r.get("new_email", ""),
+                            "New_Status": r.get("new_status", ""),
+                            "MX_Host": r.get("mx_host", ""),
+                            "SMTP_Code": r.get("smtp_code", ""),
+                            "Latency_MS": r.get("latency", 0),
+                            "Handshake_Details": r.get("details", "")
+                        })
+                messagebox.showinfo("Export Successful", f"Saved {len(dialog_records)} reformatted records to:\n\n{filepath}", parent=dialog)
+            except Exception as e:
+                messagebox.showerror("Export Error", f"Could not save CSV:\n{e}", parent=dialog)
+
+        def copy_dialog_deliverables():
+            delivs = [r.get("new_email", "").strip() for r in dialog_records if r.get("deliverable") or "Deliverable" in r.get("new_status", "")]
+            if not delivs:
+                messagebox.showinfo("No Deliverables", "No deliverable emails found yet. Run verification first.", parent=dialog)
+                return
+            self.clipboard_clear()
+            self.clipboard_append("\n".join(delivs))
+            messagebox.showinfo("Copied", f"Copied {len(delivs)} verified deliverable email(s) to clipboard!", parent=dialog)
+
+        def on_dialog_double_click(event):
+            sel = d_tree.selection()
+            if not sel: return
+            try:
+                idx = int(sel[0])
+                if 0 <= idx < len(dialog_records):
+                    r = dialog_records[idx]
+                    msg = (
+                        f"📧 Original Email: {r.get('orig_email', '')}\n"
+                        f"➡️ Reformatted Email: {r.get('new_email', '')}\n"
+                        f"📡 MX Host: {r.get('mx_host', '')}\n"
+                        f"🔢 SMTP Response Code: {r.get('smtp_code', '')}\n"
+                        f"🛡️ Verification Status: {r.get('new_status', '')}\n"
+                        f"⏱️ Response Time: {r.get('latency', 0)} ms\n\n"
+                        f"📝 Server Log:\n{r.get('details', '')}"
+                    )
+                    messagebox.showinfo("Handshake Log", msg, parent=dialog)
+            except Exception:
+                pass
+
+        def start_dialog_waterfall():
+            if not dialog_records:
+                messagebox.showwarning("No Records", "No records targeted to verify.", parent=dialog)
+                return
+            if dialog_is_running[0]:
+                return
+
+            dialog_is_running[0] = True
+            dialog_stop_requested[0] = False
+            btn_verify_reformat.configure(state=tk.DISABLED)
+            btn_waterfall_all.configure(state=tk.DISABLED)
+            btn_stop_reformat.configure(state=tk.NORMAL)
+            d_prog.configure(value=0)
+
+            threading.Thread(target=run_dialog_waterfall_worker, daemon=True).start()
+
+        def run_dialog_waterfall_worker():
+            try:
+                tout = int(self.verifier_timeout_var.get()) if hasattr(self, "verifier_timeout_var") else 8
+            except Exception:
+                tout = 8
+            catchall = self.verifier_catchall_var.get() if hasattr(self, "verifier_catchall_var") else False
+
+            total = len(dialog_records)
+            deliv_c = 0
+            undeliv_c = 0
+            risky_c = 0
+
+            for idx, item in enumerate(dialog_records, 1):
+                if dialog_stop_requested[0]:
+                    break
+
+                target_email = item.get("orig_email", "")
+                res = verify_email_waterfall_permutations(
+                    target_email,
+                    raw_row=item.get("raw_row"),
+                    info=item.get("info", ""),
+                    timeout=tout,
+                    check_catchall=catchall
+                )
+
+                item["new_email"] = res["email"]  # Winning or best email format!
+                item["new_status"] = res["status"]
+                item["badge"] = res["badge"]
+                item["mx_host"] = res["mx_host"]
+                item["smtp_code"] = str(res["smtp_code"]) if res["smtp_code"] else "-"
+                item["deliverable"] = res["deliverable"]
+                item["latency"] = res["response_time_ms"]
+                item["details"] = res["details"]
+
+                if "Deliverable" in res["status"]:
+                    deliv_c += 1
+                elif "Undeliverable" in res["status"] or "No MX" in res["status"]:
+                    undeliv_c += 1
+                else:
+                    risky_c += 1
+
+                progress_pct = int((idx / total) * 100)
+                dialog.after(0, d_prog.configure, {"value": progress_pct})
+                dialog.after(0, d_stats_lbl.configure, {
+                    "text": f"Total: {total} | 🟢 Deliverable: {deliv_c} | 🟡 Risky: {risky_c} | 🔴 Undeliverable: {undeliv_c}"
+                })
+
+                if idx % 2 == 0 or idx == total:
+                    dialog.after(0, refresh_dialog_display)
+                time.sleep(0.02)
+
+            dialog_is_running[0] = False
+            dialog.after(0, btn_verify_reformat.configure, {"state": tk.NORMAL})
+            dialog.after(0, btn_waterfall_all.configure, {"state": tk.NORMAL})
+            dialog.after(0, btn_stop_reformat.configure, {"state": tk.DISABLED})
+            dialog.after(0, refresh_dialog_display)
+            dialog.after(0, messagebox.showinfo, "✨ Auto-Waterfall Finished",
+                f"✨ Auto-Waterfall Complete!\n\n"
+                f"Total Processed: {total}\n"
+                f"🟢 Deliverable Found (250 OK): {deliv_c}\n"
+                f"🔴 Undeliverable (All Formats Failed): {undeliv_c}\n\n"
+                f"Click '📥 Apply & Update Main Table' to replace with the discovered deliverable emails.",
+                parent=dialog
+            )
+
+        d_tree.bind("<Double-1>", on_dialog_double_click)
+        btn_verify_reformat.configure(command=start_dialog_verification)
+        btn_waterfall_all.configure(command=start_dialog_waterfall)
+        btn_stop_reformat.configure(command=stop_dialog_verification)
+        btn_apply_main.configure(command=apply_to_main_table)
+        btn_export_dialog_csv.configure(command=export_dialog_csv)
+        btn_copy_dialog_valid.configure(command=copy_dialog_deliverables)
+
+        # Initial Population
+        populate_records()
 
     # -------------------------------------------------------------
     # QUERY BUILDER ENGINE

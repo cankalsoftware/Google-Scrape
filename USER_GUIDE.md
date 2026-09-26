@@ -235,6 +235,41 @@ graph TD
 6. **Export**: Click **`💾 Export Verified CSV`** to save your verified file. If you imported a CSV, **all of your original columns are 100% preserved**, with new verification columns appended!
 7. **Copy**: Click **`✉️ Copy Deliverable Only`** to copy all clean `🟢 250 OK` email addresses directly to your clipboard.
 
+#### ⚡ 1-Click Auto-Waterfall Permutation Discovery (Automatic Format Finder)
+
+Instead of manually guessing email formats, the app includes an **Auto-Waterfall Permutation Engine**:
+
+```mermaid
+graph TD
+    A["📧 Probe 1: 'ali.cankal@domain.com'"] -->|550 Mailbox Not Found| B["📧 Probe 2: 'alicankal@domain.com'"]
+    B -->|550 Mailbox Not Found| C["📧 Probe 3: 'acankal@domain.com'"]
+    C -->|🟢 250 OK: Deliverable!| D["🏆 Auto-Set Email to 'acankal@domain.com' & Stop Checking!"]
+    B -->|550 on All Formats| E["🔴 Highlight in Red: 'Undeliverable (All Formats Failed)'"]
+```
+
+**How It Works:**
+1. Keep **`⚡ Auto-Waterfall Retry on 550`** checked in Tab 3 (enabled by default).
+2. Click **`🚀 Start MX/SMTP Verification`**.
+3. If an address fails with `550`, the engine automatically tests the person's name against all major corporate formulas in prioritized sequence:
+   - `first.last` (`ali.cankal@domain.com`)
+   - `firstlast` without dot (`alicankal@domain.com`)
+   - `flast` initial + last (`acankal@domain.com`)
+   - `first_last` underscore (`ali_cankal@domain.com`)
+   - `last.first` (`cankal.ali@domain.com`)
+   - `lastf` (`cankala@domain.com`)
+   - `first` (`ali@domain.com`)
+4. **Instant Lock-In**: As soon as any format returns `🟢 250 OK (Deliverable)`, the app automatically updates the contact's email to that working address and stops probing!
+5. **If All Fail**: If every single pattern returns `550`, the contact is highlighted in red with the status `🔴 Undeliverable (All 7 Formats Failed)`.
+
+#### 🔄 Manual Pattern Studio & Custom Reformatting
+
+If you want to manually inspect and experiment with specific pattern formulas:
+1. Click the purple **`🔄 Reformat & Retry Undeliverables...`** button (or right-click any row and choose **`🔄 Reformat & Retry...`**).
+2. A dedicated studio window will open, automatically loading all failed/undeliverable contacts.
+3. Click **`✨ 1-Click Auto-Waterfall All Formats`** to automatically test and discover working formats for everyone in the list simultaneously.
+4. Or select your desired new pattern from the dropdown / quick buttons (`⚡ 'alicankal'`, `⚡ 'acankal'`, `⚡ 'ali_cankal'`).
+5. Click **`📥 Apply & Update Main Table`** to replace undeliverables with your newly discovered valid emails in your main table, or click **`💾 Export Reformatted CSV`** to save them directly.
+
 #### 🔬 How the Direct MX & SMTP Handshake Works (Under the Hood)
 The app connects directly to the recipient's official mail server without sending any test emails or using expensive third-party APIs:
 

@@ -20,7 +20,8 @@ A modern Python & Tkinter desktop application for precision OSINT, advanced Goog
   - **Option A (CSV File Import)**: Upload any external `.csv` (e.g., `Chief_Fire_Officers.csv`), auto-detect/select the email column, and verify hundreds of addresses in bulk.
   - **Option B (Multi-Line Manual Paste)**: Multi-line text field supporting raw emails, comma-separated lists, and `Name, email@domain.com` formatted strings.
   - **Full SMTP Handshake**: Performs live `HELO` -> `MAIL FROM` -> `RCPT TO` -> `250 OK / 550 Mailbox Not Found` verification without sending actual messages.
-  - **Catch-All Detection & Greylist Handling**: Optional probe to identify catch-all servers.
+  - **⚡ Auto-Waterfall Permutation Discovery**: Automatically cycles through all corporate email formulas (`first.last`, `firstlast`, `flast`, `first_last`, `last.first`, `lastf`, `first`) when an address returns 550. Automatically updates to the winning `🟢 250 OK` deliverable format, or flags as `🔴 All Formats Failed` in red.
+  - **🔄 Email Pattern Reformatting & Retry Studio**: 1-click modal window to convert undeliverable addresses (e.g. `ali.cankal` ➔ `alicankal`, `acankal`, `ali_cankal`, `cankal.ali`), test live MX/SMTP deliverability on the fly, and apply deliverable emails back to your dataset.
   - **Preserves Original CSV Data on Export**: When exporting verified records to CSV, all original columns and metadata from your imported file are 100% preserved with new verification status columns appended (`Verification_Status`, `Deliverability_Badge`, `Primary_MX_Host`, `SMTP_Response_Code`, `Response_Time_MS`).
 - **📋 Interactive Lead Table & Enriched CSV Exports**:
   - Dedicated interactive multi-column table (`ttk.Treeview`) with live sorting, color-coded badges, and 1-click **⚡ Batch Enrich** or **⚡ Enrich Selected** contact actions.

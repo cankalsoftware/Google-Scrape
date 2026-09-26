@@ -16,6 +16,12 @@ A modern Python & Tkinter desktop application for precision OSINT, advanced Goog
   - **Deliverability Status Badges**: `🟢 Valid (MX Verified)`, `🟡 Risky`, `⚪ Not Found`, `🔴 Invalid (No MX)`.
   - **Modular API Integrations**: Works 100% free with the built-in MX pattern synthesizer or integrates seamlessly with external APIs (Hunter.io, Apollo.io, Snov.io).
   - **Embedded REST API Server**: Built-in background HTTP server exposing `POST /api/enrich` and `GET /api/health` on `http://127.0.0.1:8765`.
+- **🛡️ Email & CSV Deliverability Verifier (DNS MX & SMTP Handshake)**:
+  - **Option A (CSV File Import)**: Upload any external `.csv` (e.g., `Chief_Fire_Officers.csv`), auto-detect/select the email column, and verify hundreds of addresses in bulk.
+  - **Option B (Multi-Line Manual Paste)**: Multi-line text field supporting raw emails, comma-separated lists, and `Name, email@domain.com` formatted strings.
+  - **Full SMTP Handshake**: Performs live `HELO` -> `MAIL FROM` -> `RCPT TO` -> `250 OK / 550 Mailbox Not Found` verification without sending actual messages.
+  - **Catch-All Detection & Greylist Handling**: Optional probe to identify catch-all servers.
+  - **Preserves Original CSV Data on Export**: When exporting verified records to CSV, all original columns and metadata from your imported file are 100% preserved with new verification status columns appended (`Verification_Status`, `Deliverability_Badge`, `Primary_MX_Host`, `SMTP_Response_Code`, `Response_Time_MS`).
 - **📋 Interactive Lead Table & Enriched CSV Exports**:
   - Dedicated interactive multi-column table (`ttk.Treeview`) with live sorting, color-coded badges, and 1-click **⚡ Batch Enrich** or **⚡ Enrich Selected** contact actions.
   - Export full enriched dataset with **💾 Export Enriched CSV** (First Name, Surname, Job Title, Organisation, Enriched Email, Deliverability Status, Domain, MX Server, Phone, URL).
@@ -73,6 +79,14 @@ python scraper_gui.py
 3. Click **`⚡ Batch Enrich Leads`** to resolve official domains, generate corporate email addresses (`first.last@domain`), and check DNS MX server deliverability.
 4. Click **`💾 Export Enriched CSV`** to export a clean spreadsheet ready for CRM or outreach with columns:
    - `First Name`, `Last Name`, `Full Name`, `Job Title / Role`, `Organisation`, `Resolved Domain`, `Enriched Email`, `Deliverability Status`, `MX Server Host`, `Phone`, `LinkedIn Profile URL`.
+
+### 3. Verify Emails via CSV Upload or Manual Paste
+1. Switch to **Tab 3 (Email & CSV Verifier)**.
+2. Select your input method:
+   - **Option A (CSV File)**: Browse and select any `.csv` (e.g., `Chief_Fire_Officers.csv`). The app auto-detects your email column. Click **`⚡ Load CSV into Verifier`**.
+   - **Option B (Manual Paste)**: Paste one or multiple lines containing email addresses or `Name, email@domain.com` lines, then click **`⚡ Load Pasted Emails into Verifier`**.
+3. Click **`🚀 Start MX/SMTP Verification`** to perform live DNS MX and SMTP Handshake verification (`HELO` -> `MAIL FROM` -> `RCPT TO`).
+4. Click **`💾 Export Verified CSV`** to save your verified file (all original columns from your CSV are 100% preserved with added verification columns).
 
 ---
 

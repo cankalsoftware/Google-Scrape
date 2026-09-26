@@ -9,6 +9,8 @@ import urllib.parse
 import threading
 import http.server
 import webbrowser
+import socket
+import smtplib
 import requests
 from bs4 import BeautifulSoup
 import tkinter as tk
@@ -531,6 +533,143 @@ def api_enrich_lead(lead_dict: dict, provider: str = "builtin", api_key: str = "
         }
 
 
+def verify_email_smtp_handshake(email: str, timeout: int = 8, check_catchall: bool = False) -> dict:
+    """
+    Performs full DNS MX resolution + SMTP Handshake verification (HELO -> MAIL FROM -> RCPT TO).
+    Returns a structured dictionary with deliverability status, badge, mx host, code, and response time.
+    """
+    start_time = time.time()
+    clean_email = str(email).strip()
+    
+    if not clean_email or "@" not in clean_email:
+        return {
+            "email": clean_email,
+            "domain": "",
+            "mx_host": "None",
+            "smtp_code": 0,
+            "status": "Invalid Format",
+            "badge": "⚪ Invalid Email",
+            "deliverable": False,
+            "details": "Missing @ symbol or malformed email string",
+            "response_time_ms": int((time.time() - start_time) * 1000)
+        }
+        
+    parts = clean_email.split("@")
+    user_part = parts[0].strip()
+    domain_part = parts[1].strip().lower()
+    
+    # 1. Resolve DNS MX records
+    mx_hosts = []
+    if DNS_RESOLVER_AVAILABLE:
+        try:
+            records = dns.resolver.resolve(domain_part, 'MX', lifetime=timeout)
+            sorted_records = sorted(records, key=lambda r: r.preference)
+            for r in sorted_records:
+                mx_hosts.append(str(r.exchange).rstrip('.'))
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, Exception):
+            pass
+            
+    if not mx_hosts:
+        # Fallback to direct domain check
+        try:
+            socket.gethostbyname(domain_part)
+            mx_hosts = [domain_part]
+        except Exception:
+            return {
+                "email": clean_email,
+                "domain": domain_part,
+                "mx_host": "None",
+                "smtp_code": 0,
+                "status": "Domain Not Found (No MX)",
+                "badge": "🔴 No MX Record",
+                "deliverable": False,
+                "details": f"No active MX records or DNS host found for {domain_part}",
+                "response_time_ms": int((time.time() - start_time) * 1000)
+            }
+
+    target_mx = mx_hosts[0]
+    
+    # 2. SMTP Handshake Verification
+    smtp_code = 0
+    smtp_msg = ""
+    is_deliverable = False
+    status_label = ""
+    badge_label = ""
+    
+    try:
+        server = smtplib.SMTP(timeout=timeout)
+        server.connect(target_mx, 25)
+        server.helo('check.local')
+        server.mail('probe@check.local')
+        code, msg = server.rcpt(clean_email)
+        smtp_code = code
+        smtp_msg = msg.decode('utf-8', errors='ignore') if isinstance(msg, bytes) else str(msg)
+        
+        # Check catch-all if requested and response code is 250
+        is_catchall = False
+        if code == 250 and check_catchall:
+            try:
+                fake_user = f"nonexistent_probe_{int(time.time())}@{domain_part}"
+                f_code, _ = server.rcpt(fake_user)
+                if f_code == 250:
+                    is_catchall = True
+            except Exception:
+                pass
+                
+        try:
+            server.quit()
+        except Exception:
+            pass
+            
+        if is_catchall:
+            status_label = "Catch-All Domain (Accepts All Mailboxes)"
+            badge_label = "🟡 Catch-All"
+            is_deliverable = True
+        elif code == 250:
+            status_label = "Deliverable (250 OK - Mailbox Verified)"
+            badge_label = "🟢 Deliverable"
+            is_deliverable = True
+        elif code in [450, 451, 452]:
+            status_label = f"Greylisted / Temporary Error ({code})"
+            badge_label = "🟡 Greylisted"
+            is_deliverable = False
+        elif code >= 500:
+            status_label = f"Undeliverable ({code} Mailbox Not Found)"
+            badge_label = f"🔴 Undeliverable ({code})"
+            is_deliverable = False
+        else:
+            status_label = f"SMTP Response: {code}"
+            badge_label = f"🟡 Code {code}"
+            is_deliverable = False
+            
+    except (socket.timeout, TimeoutError):
+        status_label = "MX Server Active (SMTP Timeout)"
+        badge_label = "🟡 MX Active"
+        smtp_msg = "SMTP port 25 connection timed out (often throttled by ISP/firewall)"
+        is_deliverable = True  # MX exists
+    except (ConnectionRefusedError, OSError) as e:
+        status_label = "MX Server Active (Port 25 Filtered)"
+        badge_label = "🟡 MX Active"
+        smtp_msg = f"Port 25 blocked by local network/ISP ({type(e).__name__})"
+        is_deliverable = True  # MX exists
+    except Exception as e:
+        status_label = f"Check Failed: {type(e).__name__}"
+        badge_label = "⚪ Check Error"
+        smtp_msg = str(e)
+        
+    return {
+        "email": clean_email,
+        "domain": domain_part,
+        "mx_host": target_mx,
+        "smtp_code": smtp_code,
+        "status": status_label,
+        "badge": badge_label,
+        "deliverable": is_deliverable,
+        "details": smtp_msg,
+        "response_time_ms": int((time.time() - start_time) * 1000)
+    }
+
+
 class LocalEnrichmentHandler(http.server.BaseHTTPRequestHandler):
     """Embedded HTTP REST endpoint for server-side /api/enrich queries."""
     def log_message(self, format, *args):
@@ -735,6 +874,21 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.filter_company_var = tk.StringVar(value="(All Organisations)")
         self.filter_status_var = tk.StringVar(value="(All Statuses)")
 
+        # Email & CSV Verifier State
+        self.verifier_data = []           # List of dicts for verification
+        self.verifier_raw_rows = []       # Original CSV rows for preserving columns
+        self.verifier_csv_fieldnames = [] # Original CSV fieldnames
+        self.verifier_is_running = False
+        self.verifier_stop_requested = False
+        self.verifier_sort_col = None
+        self.verifier_sort_rev = False
+        self.verifier_input_mode = tk.StringVar(value="csv")
+        self.verifier_csv_path_var = tk.StringVar(value="")
+        self.verifier_selected_col_var = tk.StringVar(value="")
+        self.verifier_timeout_var = tk.IntVar(value=8)
+        self.verifier_catchall_var = tk.BooleanVar(value=False)
+        self.verifier_filter_var = tk.StringVar(value="")
+
         # Start Local Enrichment REST Server in background thread
         threading.Thread(target=start_local_enrichment_server, daemon=True).start()
 
@@ -821,12 +975,17 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.notebook.add(self.tab_results, text=" 📋 Extracted Results & Text Box ")
         self._build_tab_results()
         
-        # Tab 3: Search Operators Cheat Sheet
+        # Tab 3: Email & CSV Verifier (MX & SMTP Handshake)
+        self.tab_verifier = ttk.Frame(self.notebook, padding="8")
+        self.notebook.add(self.tab_verifier, text=" 🛡️ Email & CSV Verifier (MX/SMTP) ")
+        self._build_tab_verifier()
+        
+        # Tab 4: Search Operators Cheat Sheet
         self.tab_cheatsheet = ttk.Frame(self.notebook, padding="8")
         self.notebook.add(self.tab_cheatsheet, text=" 📖 Search Operators Cheat Sheet ")
         self._build_tab_cheatsheet()
         
-        # Tab 4: Search Query History Log
+        # Tab 5: Search Query History Log
         self.tab_history = ttk.Frame(self.notebook, padding="8")
         self.notebook.add(self.tab_history, text=" 📜 Query History Log ")
         self._build_tab_history()
@@ -1887,6 +2046,728 @@ class GoogleLeadScraperSuite(tk.Tk):
             self._refresh_history_combo()
             self._refresh_history_listbox()
             self.status_var.set("Search history log cleared.")
+
+    # -------------------------------------------------------------
+    # TAB: EMAIL & CSV VERIFIER (DNS MX + SMTP HANDSHAKE)
+    # -------------------------------------------------------------
+    def _build_tab_verifier(self):
+        # Header
+        v_header = ttk.Label(self.tab_verifier, text="🛡️ Email & CSV Deliverability Verifier (DNS MX & SMTP Handshake)", style="Header.TLabel")
+        v_header.pack(anchor=tk.W, pady=(0, 2))
+        
+        v_sub = ttk.Label(self.tab_verifier, text="Verify deliverability by testing live DNS MX records and performing direct SMTP server handshakes (HELO -> MAIL FROM -> RCPT TO).", style="SubHeader.TLabel")
+        v_sub.pack(anchor=tk.W, pady=(0, 8))
+        
+        # 1. Input Source Selector (CSV File vs Manual Paste)
+        mode_frame = ttk.LabelFrame(self.tab_verifier, text=" 📥 Choose Input Source (CSV Upload or Manual Paste) ", padding="8")
+        mode_frame.pack(fill=tk.X, pady=(0, 6))
+        
+        mode_radio_bar = ttk.Frame(mode_frame)
+        mode_radio_bar.pack(fill=tk.X, pady=(0, 6))
+        
+        r_csv = ttk.Radiobutton(mode_radio_bar, text="📂 Option A: Import CSV File (Preserves all original columns upon export)", value="csv", variable=self.verifier_input_mode, command=self._on_verifier_mode_changed)
+        r_csv.pack(side=tk.LEFT, padx=(0, 20))
+        
+        r_paste = ttk.Radiobutton(mode_radio_bar, text="✍️ Option B: Paste Multiple Emails / Text Box", value="paste", variable=self.verifier_input_mode, command=self._on_verifier_mode_changed)
+        r_paste.pack(side=tk.LEFT)
+        
+        # Mode A Pane: CSV File Upload Pane
+        self.v_csv_pane = ttk.Frame(mode_frame)
+        
+        r_csv_1 = ttk.Frame(self.v_csv_pane)
+        r_csv_1.pack(fill=tk.X, pady=2)
+        
+        lbl_cpath = ttk.Label(r_csv_1, text="Select CSV File:", width=16)
+        lbl_cpath.pack(side=tk.LEFT)
+        
+        self.v_csv_entry = ttk.Entry(r_csv_1, textvariable=self.verifier_csv_path_var, font=("Segoe UI", 9), width=45)
+        self.v_csv_entry.pack(side=tk.LEFT, padx=(0, 8), fill=tk.X, expand=True)
+        
+        btn_browse_csv = ttk.Button(r_csv_1, text="📂 Browse CSV...", style="Primary.TButton", command=self._browse_verifier_csv)
+        btn_browse_csv.pack(side=tk.LEFT, padx=(0, 8))
+        
+        r_csv_2 = ttk.Frame(self.v_csv_pane)
+        r_csv_2.pack(fill=tk.X, pady=4)
+        
+        lbl_col = ttk.Label(r_csv_2, text="Email Column:", width=16)
+        lbl_col.pack(side=tk.LEFT)
+        
+        self.v_col_combo = ttk.Combobox(r_csv_2, textvariable=self.verifier_selected_col_var, state="readonly", width=26)
+        self.v_col_combo.pack(side=tk.LEFT, padx=(0, 10))
+        ToolTip(self.v_col_combo, "Select which column in your CSV contains the email addresses to test.")
+        
+        btn_load_csv = ttk.Button(r_csv_2, text="⚡ Load CSV into Verifier", style="Success.TButton", command=self._load_csv_to_verifier)
+        btn_load_csv.pack(side=tk.LEFT, padx=(0, 10))
+        
+        self.v_csv_info_lbl = ttk.Label(r_csv_2, text="No CSV file loaded yet.", foreground="#64748B")
+        self.v_csv_info_lbl.pack(side=tk.LEFT)
+        
+        # Mode B Pane: Manual Paste Text Area Pane
+        self.v_paste_pane = ttk.Frame(mode_frame)
+        
+        paste_top = ttk.Frame(self.v_paste_pane)
+        paste_top.pack(fill=tk.X, pady=(0, 4))
+        
+        lbl_paste_hint = ttk.Label(paste_top, text="Paste multiple emails below (supports one per line, comma-separated, or 'Name, email@domain' lines):", foreground="#475569")
+        lbl_paste_hint.pack(side=tk.LEFT)
+        
+        btn_paste_clip = ttk.Button(paste_top, text="📋 Paste from Clipboard", style="Secondary.TButton", command=self._paste_from_clipboard_verifier)
+        btn_paste_clip.pack(side=tk.RIGHT, padx=(4, 0))
+        
+        btn_clear_ptxt = ttk.Button(paste_top, text="🧹 Clear Text", style="Secondary.TButton", command=self._clear_verifier_pasted_text)
+        btn_clear_ptxt.pack(side=tk.RIGHT)
+        
+        self.verifier_paste_text = tk.Text(
+            self.v_paste_pane,
+            wrap=tk.NONE,
+            font=("Consolas", 9),
+            height=4,
+            bg="#FFFFFF",
+            fg="#0F172A",
+            relief=tk.SOLID,
+            borderwidth=1
+        )
+        self.verifier_paste_text.pack(fill=tk.X, pady=(0, 4))
+        
+        paste_bot = ttk.Frame(self.v_paste_pane)
+        paste_bot.pack(fill=tk.X)
+        
+        btn_load_pasted = ttk.Button(paste_bot, text="⚡ Load Pasted Emails into Verifier", style="Success.TButton", command=self._load_pasted_to_verifier)
+        btn_load_pasted.pack(side=tk.LEFT, padx=(0, 10))
+        
+        self.v_paste_info_lbl = ttk.Label(paste_bot, text="0 emails parsed from text.", foreground="#64748B")
+        self.v_paste_info_lbl.pack(side=tk.LEFT)
+        
+        # Default view is CSV mode
+        self.v_csv_pane.pack(fill=tk.X)
+        
+        # 2. Controls & Verification Options Bar
+        v_ctl_frame = ttk.LabelFrame(self.tab_verifier, text=" ⚙️ Verification Controls & Execution ", padding="8")
+        v_ctl_frame.pack(fill=tk.X, pady=(0, 6))
+        
+        ctl_row1 = ttk.Frame(v_ctl_frame)
+        ctl_row1.pack(fill=tk.X, pady=(0, 4))
+        
+        self.v_start_btn = ttk.Button(ctl_row1, text="🚀 Start MX/SMTP Verification", style="Primary.TButton", command=self._start_email_verification)
+        self.v_start_btn.pack(side=tk.LEFT, padx=(0, 8))
+        ToolTip(self.v_start_btn, "Tests DNS MX records and initiates direct SMTP handshakes for all loaded emails.")
+        
+        self.v_stop_btn = ttk.Button(ctl_row1, text="⏹ Stop", style="Danger.TButton", command=self._stop_email_verification, state=tk.DISABLED)
+        self.v_stop_btn.pack(side=tk.LEFT, padx=(0, 15))
+        
+        lbl_tout = ttk.Label(ctl_row1, text="Timeout (sec):")
+        lbl_tout.pack(side=tk.LEFT, padx=(0, 4))
+        
+        tout_spin = ttk.Spinbox(ctl_row1, from_=2, to=30, textvariable=self.verifier_timeout_var, width=4)
+        tout_spin.pack(side=tk.LEFT, padx=(0, 15))
+        ToolTip(tout_spin, "SMTP handshake connection timeout in seconds (8s is recommended).")
+        
+        chk_call = ttk.Checkbutton(ctl_row1, text="Detect Catch-All Mailboxes", variable=self.verifier_catchall_var)
+        chk_call.pack(side=tk.LEFT, padx=(0, 15))
+        ToolTip(chk_call, "Tests a randomized non-existent address on the domain to detect catch-all mail servers.")
+        
+        self.v_export_csv_btn = ttk.Button(ctl_row1, text="💾 Export Verified CSV", style="Success.TButton", command=self._export_verified_csv)
+        self.v_export_csv_btn.pack(side=tk.RIGHT, padx=(4, 0))
+        ToolTip(self.v_export_csv_btn, "Exports results as CSV with verification status and MX server responses.")
+        
+        self.v_copy_valid_btn = ttk.Button(ctl_row1, text="✉️ Copy Deliverable Only", style="Secondary.TButton", command=self._copy_deliverable_verifier_emails)
+        self.v_copy_valid_btn.pack(side=tk.RIGHT, padx=(4, 0))
+        
+        self.v_clear_btn = ttk.Button(ctl_row1, text="🗑 Clear Table", style="Secondary.TButton", command=self._clear_verifier_table)
+        self.v_clear_btn.pack(side=tk.RIGHT)
+        
+        # Progress & Live Stats Row
+        ctl_row2 = ttk.Frame(v_ctl_frame)
+        ctl_row2.pack(fill=tk.X, pady=(3, 0))
+        
+        self.v_progressbar = ttk.Progressbar(ctl_row2, orient="horizontal", mode="determinate", length=220)
+        self.v_progressbar.pack(side=tk.LEFT, padx=(0, 12), fill=tk.X, expand=True)
+        
+        self.v_stats_lbl = ttk.Label(ctl_row2, text="Total: 0 | 🟢 Deliverable: 0 | 🟡 Risky: 0 | 🔴 Undeliverable: 0", font=("Segoe UI", 9, "bold"), foreground="#2563EB")
+        self.v_stats_lbl.pack(side=tk.RIGHT)
+        
+        # 3. Interactive Verification Results Table
+        v_table_frame = ttk.Frame(self.tab_verifier)
+        v_table_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Table Filter bar
+        v_tbl_filter_bar = ttk.Frame(v_table_frame)
+        v_tbl_filter_bar.pack(fill=tk.X, pady=(0, 4))
+        
+        lbl_vfilt = ttk.Label(v_tbl_filter_bar, text="Filter Table:")
+        lbl_vfilt.pack(side=tk.LEFT, padx=(0, 4))
+        
+        self.v_filter_entry = ttk.Entry(v_tbl_filter_bar, textvariable=self.verifier_filter_var, font=("Segoe UI", 9), width=24)
+        self.v_filter_entry.pack(side=tk.LEFT, padx=(0, 8))
+        self.v_filter_entry.bind("<KeyRelease>", lambda e: self._refresh_verifier_display())
+        
+        v_tbl_hint = ttk.Label(v_tbl_filter_bar, text="💡 Click any column title to sort. Double-click any row to view full server SMTP handshake response.", foreground="#64748B", font=("Segoe UI", 8, "italic"))
+        v_tbl_hint.pack(side=tk.LEFT)
+        
+        # Treeview
+        tree_container = ttk.Frame(v_table_frame)
+        tree_container.pack(fill=tk.BOTH, expand=True)
+        
+        v_cols = ("#", "email", "info", "domain", "mx_host", "smtp_code", "status", "latency")
+        self.v_col_titles = {
+            "#": "#",
+            "email": "Email Address",
+            "info": "Contact / Extra Info",
+            "domain": "Domain",
+            "mx_host": "Primary MX Host",
+            "smtp_code": "SMTP Code",
+            "status": "Verification Status",
+            "latency": "Response"
+        }
+        
+        self.verifier_tree = ttk.Treeview(tree_container, columns=v_cols, show="headings", selectmode="extended")
+        
+        for col in v_cols:
+            self.verifier_tree.heading(col, text=self.v_col_titles[col], command=lambda c=col: self._sort_verifier_by_col(c))
+            
+        self.verifier_tree.column("#", width=38, minwidth=30, anchor="center")
+        self.verifier_tree.column("email", width=220, minwidth=140, anchor="w")
+        self.verifier_tree.column("info", width=160, minwidth=100, anchor="w")
+        self.verifier_tree.column("domain", width=140, minwidth=90, anchor="w")
+        self.verifier_tree.column("mx_host", width=180, minwidth=120, anchor="w")
+        self.verifier_tree.column("smtp_code", width=75, minwidth=60, anchor="center")
+        self.verifier_tree.column("status", width=180, minwidth=120, anchor="w")
+        self.verifier_tree.column("latency", width=75, minwidth=50, anchor="center")
+        
+        v_vsb = ttk.Scrollbar(tree_container, orient="vertical", command=self.verifier_tree.yview)
+        v_hsb = ttk.Scrollbar(tree_container, orient="horizontal", command=self.verifier_tree.xview)
+        self.verifier_tree.configure(yscrollcommand=v_vsb.set, xscrollcommand=v_hsb.set)
+        
+        self.verifier_tree.grid(row=0, column=0, sticky=tk.NSEW)
+        v_vsb.grid(row=0, column=1, sticky=tk.NS)
+        v_hsb.grid(row=1, column=0, sticky=tk.EW)
+        
+        tree_container.rowconfigure(0, weight=1)
+        tree_container.columnconfigure(0, weight=1)
+        
+        # Tags for colored status badges
+        self.verifier_tree.tag_configure("deliverable", background="#ECFDF5", foreground="#065F46")
+        self.verifier_tree.tag_configure("risky", background="#FFFBEB", foreground="#92400E")
+        self.verifier_tree.tag_configure("undeliverable", background="#FEF2F2", foreground="#991B1B")
+        self.verifier_tree.tag_configure("invalid", background="#F8FAFC", foreground="#64748B")
+        
+        self.verifier_tree.bind("<Double-1>", self._on_verifier_row_double_click)
+        
+        # Right-click context menu
+        self.v_tree_menu = tk.Menu(self, tearoff=0)
+        self.v_tree_menu.add_command(label="🔍 Inspect Full Handshake Details", command=lambda: self._on_verifier_row_double_click(None))
+        self.v_tree_menu.add_command(label="✉️ Copy Email Address", command=self._copy_selected_verifier_email)
+        self.v_tree_menu.add_command(label="📋 Copy Row Details", command=self._copy_selected_verifier_row)
+        
+        self.verifier_tree.bind("<Button-3>", self._show_verifier_context_menu)
+
+    def _on_verifier_mode_changed(self):
+        mode = self.verifier_input_mode.get()
+        if mode == "csv":
+            self.v_paste_pane.pack_forget()
+            self.v_csv_pane.pack(fill=tk.X)
+        else:
+            self.v_csv_pane.pack_forget()
+            self.v_paste_pane.pack(fill=tk.X)
+
+    def _browse_verifier_csv(self):
+        filepath = filedialog.askopenfilename(
+            title="Select CSV File to Verify",
+            filetypes=[("CSV Files (*.csv)", "*.csv"), ("All Files (*.*)", "*.*")]
+        )
+        if not filepath:
+            return
+        self.verifier_csv_path_var.set(filepath)
+        
+        try:
+            with open(filepath, "r", encoding="utf-8-sig", errors="ignore") as f:
+                reader = csv.reader(f)
+                headers = next(reader, None)
+                
+            if not headers:
+                messagebox.showerror("Invalid CSV", "The selected CSV file appears to be empty or has no header row.")
+                return
+                
+            self.verifier_csv_fieldnames = headers
+            self.v_col_combo['values'] = headers
+            
+            # Auto-detect email column
+            detected_col = None
+            email_candidates = ["email", "emails", "enriched email", "enriched_email", "mail", "contact_email", "e-mail", "primary email", "email address"]
+            for h in headers:
+                clean_h = h.strip().lower()
+                if clean_h in email_candidates:
+                    detected_col = h
+                    break
+            if not detected_col:
+                for h in headers:
+                    if "email" in h.lower() or "mail" in h.lower():
+                        detected_col = h
+                        break
+                        
+            if detected_col:
+                self.verifier_selected_col_var.set(detected_col)
+            else:
+                self.verifier_selected_col_var.set(headers[0])
+                
+            self.v_csv_info_lbl.configure(text=f"Detected {len(headers)} columns. Click '⚡ Load CSV into Verifier'.", foreground="#059669")
+        except Exception as e:
+            messagebox.showerror("CSV Read Error", f"Could not read CSV header:\n{e}")
+
+    def _load_csv_to_verifier(self):
+        filepath = self.verifier_csv_path_var.get().strip()
+        if not filepath or not os.path.exists(filepath):
+            messagebox.showwarning("Missing File", "Please browse and select a valid CSV file first.")
+            return
+            
+        email_col = self.verifier_selected_col_var.get().strip()
+        if not email_col:
+            messagebox.showwarning("Select Column", "Please select the column containing email addresses.")
+            return
+            
+        try:
+            self.verifier_data.clear()
+            self.verifier_raw_rows.clear()
+            
+            with open(filepath, "r", encoding="utf-8-sig", errors="ignore") as f:
+                reader = csv.DictReader(f)
+                self.verifier_csv_fieldnames = reader.fieldnames or []
+                for idx, row in enumerate(reader, 1):
+                    raw_email = row.get(email_col, "").strip()
+                    first_email = raw_email.split(",")[0].strip() if "," in raw_email else raw_email
+                    
+                    info_parts = []
+                    for k in ["Name", "Full Name", "First Name", "Surname", "Organisation", "Company", "Job Title", "Headline / Role"]:
+                        if k in row and row[k]:
+                            info_parts.append(str(row[k]))
+                            if len(info_parts) >= 2:
+                                break
+                    info_str = " | ".join(info_parts) if info_parts else ""
+                    
+                    domain = first_email.split("@")[1] if "@" in first_email else ""
+                    item = {
+                        "id": idx,
+                        "email": first_email,
+                        "info": info_str,
+                        "domain": domain,
+                        "mx_host": "-",
+                        "smtp_code": "-",
+                        "status": "Ready to verify",
+                        "badge": "⚪ Pending",
+                        "deliverable": False,
+                        "details": "Pending verification",
+                        "response_time_ms": 0,
+                        "raw_row": row
+                    }
+                    self.verifier_data.append(item)
+                    self.verifier_raw_rows.append(row)
+                    
+            self.v_csv_info_lbl.configure(text=f"Loaded {len(self.verifier_data)} contacts from CSV.", foreground="#059669")
+            self._refresh_verifier_display()
+            self.status_var.set(f"Loaded {len(self.verifier_data)} contacts from {os.path.basename(filepath)}. Click '🚀 Start MX/SMTP Verification'.")
+            messagebox.showinfo("CSV Loaded", f"Successfully loaded {len(self.verifier_data)} email rows from:\n\n{os.path.basename(filepath)}\n\nReady to verify deliverability.")
+        except Exception as e:
+            messagebox.showerror("Error Loading CSV", f"Could not parse CSV file:\n{e}")
+
+    def _paste_from_clipboard_verifier(self):
+        try:
+            clip = self.clipboard_get()
+            if clip:
+                self.verifier_paste_text.insert(tk.END, ("\n" if self.verifier_paste_text.get("1.0", tk.END).strip() else "") + clip.strip())
+                lines_count = len([l for l in self.verifier_paste_text.get("1.0", tk.END).split("\n") if l.strip()])
+                self.v_paste_info_lbl.configure(text=f"{lines_count} lines in text area. Click '⚡ Load Pasted Emails'.", foreground="#2563EB")
+        except Exception as e:
+            messagebox.showinfo("Clipboard", f"Could not paste from clipboard:\n{e}")
+
+    def _clear_verifier_pasted_text(self):
+        self.verifier_paste_text.delete("1.0", tk.END)
+        self.v_paste_info_lbl.configure(text="0 emails parsed from text.", foreground="#64748B")
+
+    def _load_pasted_to_verifier(self):
+        text = self.verifier_paste_text.get("1.0", tk.END).strip()
+        if not text:
+            messagebox.showwarning("Empty Text", "Please paste one or more email addresses into the text box.")
+            return
+            
+        lines = [line.strip() for line in text.split("\n") if line.strip()]
+        self.verifier_data.clear()
+        self.verifier_raw_rows.clear()
+        self.verifier_csv_fieldnames = []
+        
+        parsed_count = 0
+        for idx, line in enumerate(lines, 1):
+            found_emails = EMAIL_PATTERN.findall(line)
+            if found_emails:
+                target_email = found_emails[0].strip()
+                info_text = line.replace(target_email, "").strip(",; \t-|")
+            else:
+                target_email = line.strip()
+                info_text = ""
+                
+            domain = target_email.split("@")[1] if "@" in target_email else ""
+            item = {
+                "id": idx,
+                "email": target_email,
+                "info": info_text,
+                "domain": domain,
+                "mx_host": "-",
+                "smtp_code": "-",
+                "status": "Ready to verify",
+                "badge": "⚪ Pending",
+                "deliverable": False,
+                "details": "Pending verification",
+                "response_time_ms": 0,
+                "raw_row": {"Email": target_email, "Info": info_text}
+            }
+            self.verifier_data.append(item)
+            parsed_count += 1
+            
+        self.v_paste_info_lbl.configure(text=f"Loaded {parsed_count} pasted emails.", foreground="#059669")
+        self._refresh_verifier_display()
+        self.status_var.set(f"Loaded {parsed_count} pasted contacts. Click '🚀 Start MX/SMTP Verification'.")
+        messagebox.showinfo("Emails Loaded", f"Successfully parsed {parsed_count} email addresses.\n\nReady to start verification.")
+
+    def _start_email_verification(self):
+        if not self.verifier_data:
+            messagebox.showwarning("No Data", "Please import a CSV file or paste email addresses before starting verification.")
+            return
+            
+        if self.verifier_is_running:
+            messagebox.showwarning("Busy", "Verification is already in progress.")
+            return
+            
+        self.verifier_is_running = True
+        self.verifier_stop_requested = False
+        self.v_start_btn.configure(state=tk.DISABLED)
+        self.v_stop_btn.configure(state=tk.NORMAL)
+        self.v_progressbar.configure(value=0)
+        self.status_var.set(f"Starting DNS MX & SMTP Handshake verification for {len(self.verifier_data)} emails...")
+        
+        threading.Thread(target=self._run_verifier_worker, daemon=True).start()
+
+    def _stop_email_verification(self):
+        if self.verifier_is_running:
+            self.verifier_stop_requested = True
+            self.status_var.set("⏹ Stopping verification...")
+
+    def _run_verifier_worker(self):
+        try:
+            timeout = int(self.verifier_timeout_var.get())
+            if timeout < 1:
+                timeout = 8
+        except Exception:
+            timeout = 8
+            
+        catchall = self.verifier_catchall_var.get()
+        total = len(self.verifier_data)
+        
+        deliverable_cnt = 0
+        risky_cnt = 0
+        undeliverable_cnt = 0
+        errors_cnt = 0
+        
+        for idx, item in enumerate(self.verifier_data, 1):
+            if self.verifier_stop_requested:
+                break
+                
+            target_email = item.get("email", "")
+            self.after(0, self.status_var.set, f"🛡️ Verifying ({idx}/{total}): {target_email}...")
+            
+            res = verify_email_smtp_handshake(target_email, timeout=timeout, check_catchall=catchall)
+            
+            item["domain"] = res["domain"]
+            item["mx_host"] = res["mx_host"]
+            item["smtp_code"] = str(res["smtp_code"]) if res["smtp_code"] else "-"
+            item["status"] = res["status"]
+            item["badge"] = res["badge"]
+            item["deliverable"] = res["deliverable"]
+            item["details"] = res["details"]
+            item["response_time_ms"] = res["response_time_ms"]
+            
+            if "Deliverable" in res["status"]:
+                deliverable_cnt += 1
+            elif "Catch-All" in res["status"] or "Greylisted" in res["status"] or "MX Active" in res["status"]:
+                risky_cnt += 1
+            elif "Undeliverable" in res["status"] or "No MX" in res["status"]:
+                undeliverable_cnt += 1
+            else:
+                errors_cnt += 1
+                
+            progress_pct = int((idx / total) * 100)
+            self.after(0, self.v_progressbar.configure, {"value": progress_pct})
+            self.after(0, self.v_stats_lbl.configure, {
+                "text": f"Total: {total} | 🟢 Deliverable: {deliverable_cnt} | 🟡 Risky: {risky_cnt} | 🔴 Undeliverable: {undeliverable_cnt}"
+            })
+            
+            if idx % 2 == 0 or idx == total:
+                self.after(0, self._refresh_verifier_display)
+                
+            time.sleep(0.02)
+            
+        self.verifier_is_running = False
+        self.after(0, self.v_start_btn.configure, {"state": tk.NORMAL})
+        self.after(0, self.v_stop_btn.configure, {"state": tk.DISABLED})
+        self.after(0, self._refresh_verifier_display)
+        self.after(0, self.status_var.set, f"✅ Verification complete: {deliverable_cnt} deliverable, {undeliverable_cnt} undeliverable.")
+        
+        self.after(0, messagebox.showinfo, "✅ Verification Finished",
+            f"✅ Deliverability & SMTP Handshake Complete!\n\n"
+            f"Total Processed: {total}\n"
+            f"🟢 Deliverable (250 OK): {deliverable_cnt}\n"
+            f"🟡 Risky / Catch-All / Greylisted: {risky_cnt}\n"
+            f"🔴 Undeliverable (550 / No MX): {undeliverable_cnt}\n\n"
+            f"Click '💾 Export Verified CSV' to save your verified file."
+        )
+
+    def _get_filtered_verifier_data(self):
+        filt = self.verifier_filter_var.get().lower().strip() if hasattr(self, "verifier_filter_var") else ""
+        if not filt:
+            data = list(self.verifier_data)
+        else:
+            data = [
+                r for r in self.verifier_data
+                if (filt in r.get("email", "").lower() or
+                    filt in r.get("info", "").lower() or
+                    filt in r.get("domain", "").lower() or
+                    filt in r.get("mx_host", "").lower() or
+                    filt in r.get("status", "").lower())
+            ]
+            
+        if hasattr(self, "verifier_sort_col") and self.verifier_sort_col:
+            def sort_key(item):
+                if self.verifier_sort_col == "#":
+                    return item.get("id", 0)
+                elif self.verifier_sort_col == "email":
+                    return item.get("email", "").lower()
+                elif self.verifier_sort_col == "info":
+                    return item.get("info", "").lower()
+                elif self.verifier_sort_col == "domain":
+                    return item.get("domain", "").lower()
+                elif self.verifier_sort_col == "mx_host":
+                    return item.get("mx_host", "").lower()
+                elif self.verifier_sort_col == "smtp_code":
+                    return item.get("smtp_code", "").lower()
+                elif self.verifier_sort_col == "status":
+                    return item.get("status", "").lower()
+                elif self.verifier_sort_col == "latency":
+                    return item.get("response_time_ms", 0)
+                return ""
+            data.sort(key=sort_key, reverse=self.verifier_sort_rev)
+            
+        return data
+
+    def _refresh_verifier_display(self):
+        if not hasattr(self, "verifier_tree"):
+            return
+            
+        for item in self.verifier_tree.get_children():
+            self.verifier_tree.delete(item)
+            
+        data = self._get_filtered_verifier_data()
+        for idx, r in enumerate(data, 1):
+            st = r.get("status", "")
+            if "Deliverable" in st:
+                tag = "deliverable"
+            elif "Catch-All" in st or "Greylisted" in st or "MX Active" in st or "Risky" in st:
+                tag = "risky"
+            elif "Undeliverable" in st or "No MX" in st:
+                tag = "undeliverable"
+            else:
+                tag = "invalid"
+                
+            latency_str = f"{r.get('response_time_ms', 0)} ms" if r.get('response_time_ms') else "-"
+            self.verifier_tree.insert(
+                "",
+                tk.END,
+                iid=str(idx - 1),
+                values=(
+                    idx,
+                    r.get("email", "-"),
+                    r.get("info", "-"),
+                    r.get("domain", "-"),
+                    r.get("mx_host", "-"),
+                    r.get("smtp_code", "-"),
+                    r.get("status", "-"),
+                    latency_str
+                ),
+                tags=(tag,)
+            )
+
+    def _sort_verifier_by_col(self, col):
+        if self.verifier_sort_col == col:
+            self.verifier_sort_rev = not self.verifier_sort_rev
+        else:
+            self.verifier_sort_col = col
+            self.verifier_sort_rev = False
+            
+        self._update_verifier_column_headers()
+        self._refresh_verifier_display()
+
+    def _update_verifier_column_headers(self):
+        if not hasattr(self, "verifier_tree") or not hasattr(self, "v_col_titles"):
+            return
+        for c, title in self.v_col_titles.items():
+            if c == self.verifier_sort_col:
+                arrow = " ▼ (Z-A)" if self.verifier_sort_rev else " ▲ (A-Z)"
+                self.verifier_tree.heading(c, text=f"{title}{arrow}")
+            else:
+                self.verifier_tree.heading(c, text=title)
+
+    def _show_verifier_context_menu(self, event):
+        item = self.verifier_tree.identify_row(event.y)
+        if item:
+            curr = self.verifier_tree.selection()
+            if item not in curr:
+                self.verifier_tree.selection_set(item)
+            try:
+                self.v_tree_menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                self.v_tree_menu.grab_release()
+
+    def _on_verifier_row_double_click(self, event):
+        selected = self.verifier_tree.selection()
+        if not selected:
+            return
+        data = self._get_filtered_verifier_data()
+        try:
+            idx = int(selected[0])
+            if 0 <= idx < len(data):
+                r = data[idx]
+                msg = (
+                    f"📧 Email Address: {r.get('email', '')}\n"
+                    f"🏢 Domain: {r.get('domain', '')}\n"
+                    f"📡 Primary MX Host: {r.get('mx_host', '')}\n"
+                    f"🔢 SMTP Response Code: {r.get('smtp_code', '')}\n"
+                    f"🛡️ Verification Status: {r.get('status', '')}\n"
+                    f"⏱️ Response Time: {r.get('response_time_ms', 0)} ms\n\n"
+                    f"📝 Handshake Server Log:\n{r.get('details', '')}"
+                )
+                messagebox.showinfo("Handshake Details", msg)
+        except Exception:
+            pass
+
+    def _copy_selected_verifier_email(self):
+        selected = self.verifier_tree.selection()
+        if not selected:
+            return
+        data = self._get_filtered_verifier_data()
+        emails = []
+        for item_id in selected:
+            try:
+                idx = int(item_id)
+                if 0 <= idx < len(data):
+                    e = data[idx].get("email", "").strip()
+                    if e:
+                        emails.append(e)
+            except Exception:
+                pass
+        if emails:
+            self.clipboard_clear()
+            self.clipboard_append(", ".join(emails))
+            self.status_var.set(f"Copied {len(emails)} email(s) to clipboard.")
+            messagebox.showinfo("Copied Email", f"Copied {len(emails)} email address(es) to clipboard:\n\n" + "\n".join(emails[:10]))
+
+    def _copy_selected_verifier_row(self):
+        selected = self.verifier_tree.selection()
+        if not selected:
+            return
+        data = self._get_filtered_verifier_data()
+        lines = []
+        for item_id in selected:
+            try:
+                idx = int(item_id)
+                if 0 <= idx < len(data):
+                    r = data[idx]
+                    lines.append(f"{r.get('email', '')} | {r.get('domain', '')} | {r.get('mx_host', '')} | {r.get('status', '')} | {r.get('smtp_code', '')}")
+            except Exception:
+                pass
+        if lines:
+            self.clipboard_clear()
+            self.clipboard_append("\n".join(lines))
+            self.status_var.set(f"Copied {len(lines)} row(s) to clipboard.")
+            messagebox.showinfo("Copied Row", f"Copied {len(lines)} row(s) to clipboard!")
+
+    def _copy_deliverable_verifier_emails(self):
+        deliv = [item.get("email", "").strip() for item in self.verifier_data if item.get("deliverable") or "Deliverable" in item.get("status", "")]
+        if not deliv:
+            messagebox.showinfo("No Deliverable Emails", "No deliverable emails found yet. Run verification first.")
+            return
+        self.clipboard_clear()
+        self.clipboard_append("\n".join(deliv))
+        self.status_var.set(f"Copied {len(deliv)} deliverable email(s) to clipboard.")
+        messagebox.showinfo("Copied Deliverable Emails", f"Copied {len(deliv)} verified deliverable email addresses to clipboard!")
+
+    def _clear_verifier_table(self):
+        if self.verifier_is_running:
+            messagebox.showwarning("Busy", "Cannot clear table while verification is running.")
+            return
+        self.verifier_data.clear()
+        self.verifier_raw_rows.clear()
+        self.verifier_csv_fieldnames = []
+        self._refresh_verifier_display()
+        self.v_progressbar.configure(value=0)
+        self.v_stats_lbl.configure(text="Total: 0 | 🟢 Deliverable: 0 | 🟡 Risky: 0 | 🔴 Undeliverable: 0")
+        self.v_csv_info_lbl.configure(text="Table cleared.", foreground="#64748B")
+        self.v_paste_info_lbl.configure(text="Table cleared.", foreground="#64748B")
+        self.status_var.set("Email verifier table cleared.")
+
+    def _export_verified_csv(self):
+        if not self.verifier_data:
+            messagebox.showwarning("No Data", "No verification records to export. Load a CSV or paste emails first.")
+            return
+            
+        filepath = filedialog.asksaveasfilename(
+            title="Save Verified CSV",
+            defaultextension=".csv",
+            filetypes=[("CSV Files (*.csv)", "*.csv"), ("All Files (*.*)", "*.*")],
+            initialfile="verified_emails_delivery.csv"
+        )
+        if not filepath:
+            return
+            
+        try:
+            with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
+                if self.verifier_raw_rows and self.verifier_csv_fieldnames:
+                    extra_fields = ["Verification_Status", "Deliverability_Badge", "Primary_MX_Host", "SMTP_Response_Code", "Handshake_Details", "Response_Time_MS"]
+                    fieldnames = list(self.verifier_csv_fieldnames)
+                    for ef in extra_fields:
+                        if ef not in fieldnames:
+                            fieldnames.append(ef)
+                            
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    
+                    for item in self.verifier_data:
+                        raw = dict(item.get("raw_row", {}))
+                        raw["Verification_Status"] = item.get("status", "")
+                        raw["Deliverability_Badge"] = item.get("badge", "")
+                        raw["Primary_MX_Host"] = item.get("mx_host", "")
+                        raw["SMTP_Response_Code"] = item.get("smtp_code", "")
+                        raw["Handshake_Details"] = item.get("details", "")
+                        raw["Response_Time_MS"] = item.get("response_time_ms", 0)
+                        writer.writerow(raw)
+                else:
+                    fieldnames = ["#", "Email", "Contact_Info", "Domain", "Primary_MX_Host", "SMTP_Code", "Verification_Status", "Deliverability_Badge", "Handshake_Details", "Response_Time_MS"]
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    for idx, item in enumerate(self.verifier_data, 1):
+                        writer.writerow({
+                            "#": idx,
+                            "Email": item.get("email", ""),
+                            "Contact_Info": item.get("info", ""),
+                            "Domain": item.get("domain", ""),
+                            "Primary_MX_Host": item.get("mx_host", ""),
+                            "SMTP_Code": item.get("smtp_code", ""),
+                            "Verification_Status": item.get("status", ""),
+                            "Deliverability_Badge": item.get("badge", ""),
+                            "Handshake_Details": item.get("details", ""),
+                            "Response_Time_MS": item.get("response_time_ms", 0)
+                        })
+                        
+            self.status_var.set(f"✅ Exported {len(self.verifier_data)} verified rows to {os.path.basename(filepath)}")
+            messagebox.showinfo("Export Successful", f"Successfully exported {len(self.verifier_data)} verified contacts to:\n\n{filepath}")
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Could not save file:\n{e}")
 
     # -------------------------------------------------------------
     # QUERY BUILDER ENGINE

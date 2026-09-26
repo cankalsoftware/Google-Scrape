@@ -12,8 +12,9 @@ Welcome to the **Multi-Engine Lead & Advanced Dork Extractor Suite**! This guide
 4. [Step-by-Step Guide by Tab](#4-step-by-step-guide-by-tab)
    - [Tab 1: Query Builder & Search](#tab-1-query-builder--search)
    - [Tab 2: Results, Enrichment & Exporting](#tab-2-results-enrichment--exporting)
-   - [Tab 3: Search Operators Cheat Sheet](#tab-3-search-operators-cheat-sheet)
-   - [Tab 4: Search History & Recall](#tab-4-search-history--recall)
+   - [Tab 3: Email & CSV Verifier (MX & SMTP Handshake)](#tab-3-email--csv-verifier-mx--smtp-handshake)
+   - [Tab 4: Search Operators Cheat Sheet](#tab-4-search-operators-cheat-sheet)
+   - [Tab 5: Search History & Recall](#tab-5-search-history--recall)
 5. [Understanding Deliverability Badges](#5-understanding-deliverability-badges)
 6. [Bypassing CAPTCHAs & Google Blocks](#6-bypassing-captchas--google-blocks)
 7. [Configuring Enrichment Settings (Custom Domains & APIs)](#7-configuring-enrichment-settings-custom-domains--apis)
@@ -177,20 +178,104 @@ Switch views using the radio buttons at the top:
 
 ---
 
-### Tab 3: Search Operators Cheat Sheet
+### Tab 3: Email & CSV Verifier (MX & SMTP Handshake)
+
+This dedicated verifier allows you to test any list of email addresses using direct **DNS MX resolution** and a live **SMTP Handshake** (`HELO` ➔ `MAIL FROM` ➔ `RCPT TO` ➔ `250 OK / 550 Mailbox Not Found`) without sending actual test emails.
+
+You have two easy ways to feed emails into the verifier:
+
+```mermaid
+graph TD
+    A1["📂 Option A: Upload CSV File"] --> C["⚡ Load into Verifier Table"]
+    A2["✍️ Option B: Paste Multiple Lines / Raw Text"] --> C
+    C --> D["🚀 Start MX/SMTP Verification"]
+    D --> E1["🟢 250 OK: Deliverable"]
+    D --> E2["🟡 Catch-All / Greylisted"]
+    D --> E3["🔴 550 / No MX: Undeliverable"]
+    E1 --> F["💾 Export Verified CSV (Preserves all original columns)"]
+    E2 --> F
+    E3 --> F
+```
+
+#### 📂 Option A: Import a CSV File (e.g. `Chief_Fire_Officers.csv`)
+1. Select the **`📂 Option A: Import CSV File`** radio button.
+2. Click **`📂 Browse CSV...`** and choose your spreadsheet file.
+3. The app automatically scans your headers and picks your email column (e.g. `Emails`, `Enriched Email`, `Contact_Email`). If needed, pick the desired column from the dropdown.
+4. Click **`⚡ Load CSV into Verifier`**.
+5. All rows will appear in the interactive table ready for checking.
+
+#### ✍️ Option B: Paste Multiple Emails (Text Box)
+1. Select the **`✍️ Option B: Paste Multiple Emails / Text Box`** radio button.
+2. Paste any list into the text area. You can paste:
+   - One email per line:
+     ```text
+     john.smith@manchesterfire.gov.uk
+     sarah.connor@london-fire.gov.uk
+     ```
+   - Comma-separated or tab-separated text:
+     ```text
+     john@example.com, alex@example.org, contact@test.co.uk
+     ```
+   - Lines with names or titles:
+     ```text
+     Chief Fire Officer John Smith, cfo@cumbriafire.gov.uk
+     Director Jane Doe <jane.doe@bucksfire.gov.uk>
+     ```
+3. Click **`⚡ Load Pasted Emails into Verifier`**.
+
+#### Running Verification & Analyzing Results
+1. *(Optional)* Adjust **Timeout (sec)** (default: `8s`) or enable **`Detect Catch-All Mailboxes`**.
+2. Click **`🚀 Start MX/SMTP Verification`**.
+3. Watch the progress bar and real-time live counters:
+   - `🟢 Deliverable`: Mail server replied with `250 OK` (mailbox is 100% active).
+   - `🟡 Catch-All / Greylisted`: Domain accepts all mail or has temporary anti-spam delay.
+   - `🔴 Undeliverable`: Domain does not exist or server returned `550 User Not Found`.
+4. **Inspect Server Logs**: Double-click any row to open the **Handshake Details** dialog to inspect raw SMTP server responses, latency in milliseconds, and MX host.
+5. **Sort & Filter**: Click any column header to sort alphabetically, or type in the **Filter Table** box to narrow down leads.
+6. **Export**: Click **`💾 Export Verified CSV`** to save your verified file. If you imported a CSV, **all of your original columns are 100% preserved**, with new verification columns appended!
+7. **Copy**: Click **`✉️ Copy Deliverable Only`** to copy all clean `🟢 250 OK` email addresses directly to your clipboard.
+
+#### 🔬 How the Direct MX & SMTP Handshake Works (Under the Hood)
+The app connects directly to the recipient's official mail server without sending any test emails or using expensive third-party APIs:
+
+```mermaid
+sequenceDiagram
+    participant App as 💻 Our App
+    participant DNS as 🌐 DNS Server
+    participant MX as 🛡️ Target Mail Server (e.g. Microsoft 365)
+    
+    App->>DNS: 1. "Who handles email for manchesterfire.gov.uk?"
+    DNS-->>App: "Primary MX: manchesterfire-gov-uk.mail.protection.outlook.com"
+    App->>MX: 2. Connect to Port 25
+    App->>MX: 3. HELO check.local
+    App->>MX: 4. MAIL FROM: <probe@check.local>
+    App->>MX: 5. RCPT TO: <john.smith@manchesterfire.gov.uk>
+    MX-->>App: 6. "250 OK: Recipient Accepted" OR "550: User Not Found"
+    App->>MX: 7. QUIT (Closes connection - NO email is ever sent!)
+```
+
+> [!TIP]
+> **Why Direct Verification is Better than Third-Party APIs:**
+> - **100% Free & Unlimited**: No monthly subscription fees or credit limits (unlike services that charge per 1,000 verifications).
+> - **Complete Privacy**: Your contact lists and corporate emails remain local on your machine and are never uploaded to third-party databases.
+> - **Zero Configuration**: No API keys or account registrations needed.
+
+---
+
+### Tab 4: Search Operators Cheat Sheet
 
 Need inspiration for advanced searches?
-- Tab 3 contains an interactive library of Google Dork operators (`site:`, `inurl:`, `intitle:`, `filetype:`, `before:`, `after:`, etc.).
+- Tab 4 contains an interactive library of Google Dork operators (`site:`, `inurl:`, `intitle:`, `filetype:`, `before:`, `after:`, etc.).
 - **Smooth Mouse Wheel Scrolling**: Scroll up and down effortlessly through all operator guides and ready-made dork templates.
 - Click **`⚡ Load into Builder`** on any recipe to instantly load pre-built searches into Tab 1.
 
 ---
 
-### Tab 4: Search History & Recall
+### Tab 5: Search History & Recall
 
 - Every search you run is automatically saved with a timestamp and search engine tag.
 - If you ran a great search yesterday and want to run it again:
-  1. Go to **Tab 4 (History Log)**.
+  1. Go to **Tab 5 (History Log)**.
   2. Click on the past query.
   3. Click **`⚡ Recall Selected into Builder`**.
 

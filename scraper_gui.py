@@ -11,6 +11,7 @@ import http.server
 import webbrowser
 import socket
 import smtplib
+import zipfile
 import requests
 from bs4 import BeautifulSoup
 import tkinter as tk
@@ -39,208 +40,36 @@ except (ImportError, Exception):
 EMAIL_PATTERN = re.compile(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+')
 PHONE_PATTERN = re.compile(r'(?:(?:\+44\s?\(0\)\s?\d{2,4}|\+44\s?\d{2,4}|0\d{2,4})\s?\d{3,4}\s?\d{3,4}|\+?\d{1,3}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9})')
 
-# History log file path & Auth Profile path
+# ---------------------------------------------------------------------------
+# MODULAR DATA & STORAGE LAYER (JSON Configs + SQLite Persistence)
+# ---------------------------------------------------------------------------
+import data_loader
+import storage
+
+# History log file path & Auth Profile path & Registry Sources
 HISTORY_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "search_history.log")
+REGISTRY_SOURCES_FILE = data_loader.REGISTRY_SOURCES_FILE
 AUTH_PROFILE_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "GoogleScraperAuthProfile")
 LOCAL_ENRICHMENT_PORT = 8765
 
-# ---------------------------------------------------------------------------
-# OFFICIAL UK PUBLIC SECTOR & INDUSTRY DOMAIN REGISTRIES
-# ---------------------------------------------------------------------------
-UK_FIRE_SERVICES_DOMAINS = {
-    # Metropolitan & Combined Services
-    "london fire brigade": "london-fire.gov.uk",
-    "london fire": "london-fire.gov.uk",
-    "lfb": "london-fire.gov.uk",
-    "greater manchester fire and rescue": "manchesterfire.gov.uk",
-    "greater manchester fire": "manchesterfire.gov.uk",
-    "manchester fire": "manchesterfire.gov.uk",
-    "gmfrs": "manchesterfire.gov.uk",
-    "west midlands fire service": "wmfs.net",
-    "west midlands fire": "wmfs.net",
-    "wmfs": "wmfs.net",
-    "west yorkshire fire and rescue": "westyorksfire.gov.uk",
-    "west yorkshire fire": "westyorksfire.gov.uk",
-    "wyfrs": "westyorksfire.gov.uk",
-    "south yorkshire fire and rescue": "syfire.gov.uk",
-    "south yorkshire fire": "syfire.gov.uk",
-    "syfr": "syfire.gov.uk",
-    "merseyside fire and rescue": "merseyfire.gov.uk",
-    "merseyside fire": "merseyfire.gov.uk",
-    "mfra": "merseyfire.gov.uk",
-    "tyne and wear fire and rescue": "twfire.gov.uk",
-    "tyne and wear fire": "twfire.gov.uk",
-    "twfrs": "twfire.gov.uk",
-    
-    # England County Services
-    "avon fire and rescue": "avonfire.gov.uk",
-    "avon fire": "avonfire.gov.uk",
-    "bedfordshire fire and rescue": "bedsfire.gov.uk",
-    "bedfordshire fire": "bedsfire.gov.uk",
-    "royal berkshire fire and rescue": "rbfrs.co.uk",
-    "royal berkshire fire": "rbfrs.co.uk",
-    "rbfrs": "rbfrs.co.uk",
-    "buckinghamshire and milton keynes fire": "bucksfire.gov.uk",
-    "buckinghamshire fire and rescue": "bucksfire.gov.uk",
-    "buckinghamshire fire": "bucksfire.gov.uk",
-    "bucks fire": "bucksfire.gov.uk",
-    "cambridgeshire fire and rescue": "cambsfire.gov.uk",
-    "cambridgeshire fire": "cambsfire.gov.uk",
-    "cambs fire": "cambsfire.gov.uk",
-    "cheshire fire and rescue": "cheshirefire.gov.uk",
-    "cheshire fire": "cheshirefire.gov.uk",
-    "cleveland fire brigade": "clevelandfire.gov.uk",
-    "cleveland fire": "clevelandfire.gov.uk",
-    "cornwall fire and rescue": "cornwall.gov.uk",
-    "cornwall fire": "cornwall.gov.uk",
-    "county durham and darlington fire": "ddfire.gov.uk",
-    "durham and darlington fire": "ddfire.gov.uk",
-    "durham fire": "ddfire.gov.uk",
-    "cddfrs": "ddfire.gov.uk",
-    "cumbria fire and rescue": "cumbriafire.gov.uk",
-    "cumbria fire": "cumbriafire.gov.uk",
-    "derbyshire fire and rescue": "derbys-fire.gov.uk",
-    "derbyshire fire": "derbys-fire.gov.uk",
-    "dfrs": "derbys-fire.gov.uk",
-    "devon and somerset fire and rescue": "dsfire.gov.uk",
-    "devon and somerset fire": "dsfire.gov.uk",
-    "dsfrs": "dsfire.gov.uk",
-    "dorset and wiltshire fire and rescue": "dwfire.org.uk",
-    "dorset & wiltshire fire": "dwfire.org.uk",
-    "dorset and wiltshire fire": "dwfire.org.uk",
-    "dwfrs": "dwfire.org.uk",
-    "east sussex fire and rescue": "esfrs.org",
-    "east sussex fire": "esfrs.org",
-    "esfrs": "esfrs.org",
-    "essex county fire and rescue": "essex-fire.gov.uk",
-    "essex fire and rescue": "essex-fire.gov.uk",
-    "essex fire": "essex-fire.gov.uk",
-    "ecfrs": "essex-fire.gov.uk",
-    "gloucestershire fire and rescue": "glosfire.gov.uk",
-    "gloucestershire fire": "glosfire.gov.uk",
-    "hampshire and isle of wight fire and rescue": "hantsfire.gov.uk",
-    "hampshire and isle of wight fire": "hantsfire.gov.uk",
-    "hampshire & isle of wight fire": "hantsfire.gov.uk",
-    "hampshire fire and rescue": "hantsfire.gov.uk",
-    "hampshire fire": "hantsfire.gov.uk",
-    "hiwfrs": "hantsfire.gov.uk",
-    "hereford and worcester fire and rescue": "hwfire.org.uk",
-    "hereford & worcester fire": "hwfire.org.uk",
-    "hereford and worcester fire": "hwfire.org.uk",
-    "hwfrs": "hwfire.org.uk",
-    "hertfordshire fire and rescue": "hertfordshire.gov.uk",
-    "hertfordshire fire": "hertfordshire.gov.uk",
-    "herts fire": "hertfordshire.gov.uk",
-    "humberside fire and rescue": "humbersidefire.gov.uk",
-    "humberside fire": "humbersidefire.gov.uk",
-    "kent fire and rescue": "kent.fire-uk.org",
-    "kent fire": "kent.fire-uk.org",
-    "kfrs": "kent.fire-uk.org",
-    "lancashire fire and rescue": "lancsfirerescue.org.uk",
-    "lancashire fire": "lancsfirerescue.org.uk",
-    "lfrs": "lancsfirerescue.org.uk",
-    "leicestershire fire and rescue": "leics-fire.gov.uk",
-    "leicestershire fire": "leics-fire.gov.uk",
-    "lincolnshire fire and rescue": "lincolnshire.gov.uk",
-    "lincolnshire fire": "lincolnshire.gov.uk",
-    "norfolk fire and rescue": "norfolk.gov.uk",
-    "norfolk fire": "norfolk.gov.uk",
-    "northamptonshire fire and rescue": "northantsfire.gov.uk",
-    "northamptonshire fire": "northantsfire.gov.uk",
-    "northants fire": "northantsfire.gov.uk",
-    "northumberland fire and rescue": "northumberland.gov.uk",
-    "northumberland fire": "northumberland.gov.uk",
-    "north yorkshire fire and rescue": "northyorksfire.gov.uk",
-    "north yorkshire fire": "northyorksfire.gov.uk",
-    "nyfrs": "northyorksfire.gov.uk",
-    "nottinghamshire fire and rescue": "notts-fire.gov.uk",
-    "nottinghamshire fire": "notts-fire.gov.uk",
-    "notts fire": "notts-fire.gov.uk",
-    "oxfordshire fire and rescue": "oxfordshire.gov.uk",
-    "oxfordshire fire": "oxfordshire.gov.uk",
-    "shropshire fire and rescue": "shropshirefire.gov.uk",
-    "shropshire fire": "shropshirefire.gov.uk",
-    "staffordshire fire and rescue": "staffordshirefire.gov.uk",
-    "staffordshire fire": "staffordshirefire.gov.uk",
-    "suffolk fire and rescue": "suffolk.gov.uk",
-    "suffolk fire": "suffolk.gov.uk",
-    "surrey fire and rescue": "surreycc.gov.uk",
-    "surrey fire": "surreycc.gov.uk",
-    "warwickshire fire and rescue": "warwickshire.gov.uk",
-    "warwickshire fire": "warwickshire.gov.uk",
-    "west sussex fire and rescue": "westsussex.gov.uk",
-    "west sussex fire": "westsussex.gov.uk",
-    
-    # Devolved Nations & National Bodies
-    "scottish fire and rescue": "firescotland.gov.uk",
-    "scottish fire": "firescotland.gov.uk",
-    "scotland fire": "firescotland.gov.uk",
-    "sfrs": "firescotland.gov.uk",
-    "south wales fire and rescue": "southwales-fire.gov.uk",
-    "south wales fire": "southwales-fire.gov.uk",
-    "swfrs": "southwales-fire.gov.uk",
-    "mid and west wales fire and rescue": "mawwfire.gov.uk",
-    "mid and west wales fire": "mawwfire.gov.uk",
-    "mawwfrs": "mawwfire.gov.uk",
-    "north wales fire and rescue": "northwalesfire.gov.wales",
-    "north wales fire": "northwalesfire.gov.wales",
-    "nwfrs": "northwalesfire.gov.wales",
-    "northern ireland fire and rescue": "nifrs.org",
-    "northern ireland fire": "nifrs.org",
-    "nifrs": "nifrs.org",
-    "national fire chiefs council": "nationalfirechiefs.org.uk",
-    "nfcc": "nationalfirechiefs.org.uk",
-    "fire service college": "fireservicecollege.ac.uk",
-    "fsc": "fireservicecollege.ac.uk"
-}
+# Pre-configured Official Open Data Registers and Directory Portals
+DEFAULT_REGISTRY_SOURCES = data_loader.load_registry_sources()
 
-UK_NHS_DOMAINS = {
-    "barts health": "bartshealth.nhs.uk",
-    "guy's and st thomas": "gstt.nhs.uk",
-    "guys and st thomas": "gstt.nhs.uk",
-    "imperial college healthcare": "imperial.nhs.uk",
-    "king's college hospital": "kch.nhs.uk",
-    "kings college hospital": "kch.nhs.uk",
-    "manchester university nhs": "mft.nhs.uk",
-    "university hospitals birmingham": "uhb.nhs.uk",
-    "leeds teaching hospitals": "leedsth.nhs.uk",
-    "newcastle upon tyne hospitals": "nuth.nhs.uk",
-    "sheffield teaching hospitals": "sth.nhs.uk",
-    "nottingham university hospitals": "nuh.nhs.uk",
-    "oxford university hospitals": "ouh.nhs.uk",
-    "cambridge university hospitals": "cuh.nhs.uk",
-    "nhs digital": "nhs.net",
-    "nhs england": "england.nhs.uk"
-}
+def load_registry_sources():
+    """Loads saved registry sources using data_loader."""
+    return data_loader.load_registry_sources()
 
-UK_COUNCILS_DOMAINS = {
-    "birmingham city council": "birmingham.gov.uk",
-    "leeds city council": "leeds.gov.uk",
-    "glasgow city council": "glasgow.gov.uk",
-    "sheffield city council": "sheffield.gov.uk",
-    "manchester city council": "manchester.gov.uk",
-    "liverpool city council": "liverpool.gov.uk",
-    "bristol city council": "bristol.gov.uk",
-    "edinburgh city council": "edinburgh.gov.uk",
-    "cardiff council": "cardiff.gov.uk",
-    "hampshire county council": "hants.gov.uk",
-    "essex county council": "essex.gov.uk",
-    "kent county council": "kent.gov.uk",
-    "surrey county council": "surreycc.gov.uk",
-    "lancashire county council": "lancashire.gov.uk"
-}
+def save_registry_sources(sources_list):
+    """Saves registry sources using data_loader."""
+    return data_loader.save_registry_sources(sources_list)
 
-UK_POLICE_DOMAINS = {
-    "metropolitan police": "met.police.uk",
-    "met police": "met.police.uk",
-    "greater manchester police": "gmp.police.uk",
-    "west midlands police": "westmidlands.police.uk",
-    "west yorkshire police": "westyorkshire.police.uk",
-    "thames valley police": "thamesvalley.police.uk",
-    "police scotland": "scotland.police.uk",
-    "police service of northern ireland": "psni.police.uk",
-    "psni": "psni.police.uk"
-}
+# Backward-compatible dynamic domain lookups
+UK_FIRE_SERVICES_DOMAINS = data_loader.get_domain_lookup("fire")
+UK_NHS_DOMAINS = data_loader.get_domain_lookup("nhs")
+UK_COUNCILS_DOMAINS = data_loader.get_domain_lookup("council")
+UK_POLICE_DOMAINS = data_loader.get_domain_lookup("police")
+UK_ENVIRONMENT_DOMAINS = data_loader.get_domain_lookup("environment")
+UK_TRANSPORT_HIGHWAYS_DOMAINS = data_loader.get_domain_lookup("transport_highways")
 
 HONORIFICS = {
     "dr", "dr.", "doctor", "mr", "mr.", "mrs", "mrs.", "ms", "ms.", "miss",
@@ -326,34 +155,28 @@ def resolve_organization_domain(org_text: str, headline: str = "", snippet: str 
     if custom_domain and custom_domain.strip():
         return custom_domain.strip().lower().replace("@", "")
         
-    # Select active lookup dictionary
-    if industry == "nhs":
-        lookup_dict = UK_NHS_DOMAINS
-    elif industry == "council":
-        lookup_dict = UK_COUNCILS_DOMAINS
-    elif industry == "police":
-        lookup_dict = UK_POLICE_DOMAINS
-    else:
-        lookup_dict = UK_FIRE_SERVICES_DOMAINS
+    # Select active lookup dictionary via data_loader
+    lookup_dict = data_loader.get_domain_lookup(industry)
         
     clean_org = clean_org_text(org_text)
+    combined = clean_org_text(f"{org_text} {headline} {snippet}")
     
-    # 1. Exact match
+    # 1. Check primary industry lookup dictionary
     if clean_org in lookup_dict:
         return lookup_dict[clean_org]
-        
-    # 2. Check if dictionary key is contained in organization string
     for key, dom in sorted(lookup_dict.items(), key=lambda x: len(x[0]), reverse=True):
-        if key in clean_org:
+        if key in clean_org or key in combined:
             return dom
             
-    # 3. Check combined text (headline + snippet context)
-    combined = clean_org_text(f"{org_text} {headline} {snippet}")
-    for key, dom in sorted(lookup_dict.items(), key=lambda x: len(x[0]), reverse=True):
-        if key in combined:
+    # 2. Check all sectors lookup dictionary as fallback
+    all_dict = data_loader.get_domain_lookup("all")
+    if clean_org in all_dict:
+        return all_dict[clean_org]
+    for key, dom in sorted(all_dict.items(), key=lambda x: len(x[0]), reverse=True):
+        if key in clean_org or key in combined:
             return dom
             
-    # 4. Check if any .gov.uk or .nhs.uk or .org.uk domain is mentioned directly in snippet
+    # 3. Check if any .gov.uk or .nhs.uk or .org.uk domain is mentioned directly in snippet
     domain_match = re.search(r'([a-zA-Z0-9.-]+\.(?:gov\.uk|nhs\.uk|police\.uk|org\.uk|ac\.uk|net|org|com))', f"{org_text} {snippet}")
     if domain_match:
         extracted_dom = domain_match.group(1).lower()
@@ -365,14 +188,25 @@ def resolve_organization_domain(org_text: str, headline: str = "", snippet: str 
 
 def verify_domain_mx(domain: str):
     """
-    Queries DNS MX records to verify active mail exchangers with local caching.
+    Queries DNS MX records to verify active mail exchangers with SQLite persistent cache.
     Returns: (is_valid: bool, status_label: str, mx_hosts: list)
     """
     if not domain:
         return False, "No Domain", []
     domain = domain.lower().strip()
+    
+    # 1. In-Memory Cache Check
     if domain in _MX_CACHE:
         return _MX_CACHE[domain]
+        
+    # 2. SQLite Persistent Cache Check
+    cached = storage.get_cached_mx(domain)
+    if cached is not None:
+        hosts = [cached["mx_host"]] if cached["mx_host"] else []
+        status = "Valid (MX Verified)" if cached["has_mx"] else "Invalid (No MX)"
+        res = (cached["has_mx"], status, hosts)
+        _MX_CACHE[domain] = res
+        return res
         
     if DNS_RESOLVER_AVAILABLE and dns is not None:
         try:
@@ -400,6 +234,11 @@ def verify_domain_mx(domain: str):
         res = (False, "Invalid (Host Unreachable)", [])
         
     _MX_CACHE[domain] = res
+    try:
+        primary_host = res[2][0] if (len(res) > 2 and res[2]) else ""
+        storage.set_cached_mx(domain, res[0], False, primary_host)
+    except Exception:
+        pass
     return res
 
 
@@ -1060,6 +899,21 @@ class GoogleLeadScraperSuite(tk.Tk):
         self._updating_query = False
         self.search_history = self._load_search_history()
         
+        # Search Criteria Strategy State (targeted vs generalized)
+        self.active_criteria_mode = "targeted"
+        
+        # Generalized Multi-Group Boolean Search Criteria State
+        self.gen_industry_var = tk.StringVar(value="")
+        self.gen_scale_var = tk.StringVar(value="")
+        self.gen_geo_var = tk.StringVar(value="")
+        self.gen_exclude_var = tk.StringVar(value="")
+        self.gen_intext_var = tk.StringVar(value="")
+        self.gen_inurl_var = tk.StringVar(value="")
+        self.gen_filetype_var = tk.StringVar(value="None")
+        self.gen_site_var = tk.StringVar(value="")
+        self.gen_email_dork_var = tk.BooleanVar(value=False)
+        self.gen_phone_dork_var = tk.BooleanVar(value=False)
+        
         # Enrichment Configuration State
         self.enrich_industry_var = tk.StringVar(value="fire")
         self.enrich_pattern_var = tk.StringVar(value="{first}.{last}@{domain}")
@@ -1090,6 +944,21 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.verifier_waterfall_var = tk.BooleanVar(value=True)
         self.verifier_filter_var = tk.StringVar(value="")
 
+        # Direct Open Data & Public Registry State
+        self.opendata_sources = load_registry_sources()
+        self.opendata_selected_var = tk.StringVar(value=self.opendata_sources[0]["name"] if self.opendata_sources else "")
+        self.opendata_url_var = tk.StringVar(value=self.opendata_sources[0]["url"] if self.opendata_sources else "")
+        self.opendata_name_var = tk.StringVar(value=self.opendata_sources[0]["name"] if self.opendata_sources else "")
+        self.opendata_filter_var = tk.StringVar(value="")
+        self.opendata_max_rows_var = tk.IntVar(value=500)
+        self.opendata_raw_records = []
+        self.opendata_headers = []
+        self.opendata_filtered_records = []
+        self.opendata_is_fetching = False
+        self.opendata_stop_requested = False
+        self.opendata_sort_col = None
+        self.opendata_sort_rev = False
+
         # Start Local Enrichment REST Server in background thread
         threading.Thread(target=start_local_enrichment_server, daemon=True).start()
 
@@ -1114,11 +983,18 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.style.configure("TRadiobutton", background="#F1F5F9", foreground="#1E293B", font=("Segoe UI", 9))
         self.style.configure("TCombobox", font=("Segoe UI", 9))
         
-        # Notebook (Tabs)
+        # Main Notebook (Tabs)
         self.style.configure("TNotebook", background="#E2E8F0", borderwidth=0)
         self.style.configure("TNotebook.Tab", font=("Segoe UI", 9, "bold"), padding=[14, 7], background="#CBD5E1", foreground="#475569")
         self.style.map("TNotebook.Tab", 
                        background=[("selected", "#FFFFFF"), ("active", "#E2E8F0")], 
+                       foreground=[("selected", "#2563EB"), ("active", "#0F172A")])
+        
+        # Sub-Notebook (Criteria Subtabs)
+        self.style.configure("Sub.TNotebook", background="#F1F5F9", borderwidth=0)
+        self.style.configure("Sub.TNotebook.Tab", font=("Segoe UI", 9, "bold"), padding=[12, 6], background="#E2E8F0", foreground="#475569")
+        self.style.map("Sub.TNotebook.Tab", 
+                       background=[("selected", "#FFFFFF"), ("active", "#F8FAFC")], 
                        foreground=[("selected", "#2563EB"), ("active", "#0F172A")])
         
         # Headers
@@ -1147,6 +1023,65 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.style.map("Operator.TButton", background=[("active", "#C7D2FE")])
 
     def _build_ui(self):
+        # --- Native Application Menu Bar ---
+        menubar = tk.Menu(self)
+        
+        # 1. File Menu
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="💾 Export Enriched Leads CSV (Tab 2)", command=self._save_to_enriched_csv)
+        file_menu.add_command(label="🛡️ Export Verified CSV (Tab 3)", command=self._export_verified_csv)
+        file_menu.add_command(label="📥 Export Open Data CSV (Tab 4)", command=self._export_opendata_csv)
+        file_menu.add_separator()
+        file_menu.add_command(label="🔄 Reset All Search Criteria", command=self._reset_builder)
+        file_menu.add_command(label="🗑️ Clear Results Table", command=self._clear_results)
+        file_menu.add_separator()
+        file_menu.add_command(label="❌ Exit", command=self._on_closing)
+        menubar.add_cascade(label="File", menu=file_menu)
+        
+        # 2. Templates Menu
+        templates_menu = tk.Menu(menubar, tearoff=0)
+        templates_menu.add_command(label="♻️ Materials Recovery & Waste Facilities (UK)", command=lambda: self._load_preset("gen_waste"))
+        templates_menu.add_command(label="🏴󠁧󠁢󠁥󠁮󠁧󠁿 EA: Waste Permitting & Operations (England)", command=lambda: self._load_preset("ea_waste_ops"))
+        templates_menu.add_command(label="🏴󠁧󠁢󠁥󠁮󠁧󠁿 EA: Waste Carriers, Brokers & Dealers", command=lambda: self._load_preset("ea_waste_carriers"))
+        templates_menu.add_command(label="🏴󠁧󠁢󠁳󠁣󠁴󠁿 SEPA: Waste Carriers & Authorisations (Scotland)", command=lambda: self._load_preset("sepa_waste"))
+        templates_menu.add_command(label="🏴󠁧󠁢󠁷󠁬󠁳󠁿 NRW: Waste Permitting & Carriers (Wales)", command=lambda: self._load_preset("nrw_waste"))
+        templates_menu.add_command(label="🇬🇧 Combined UK Regulators (EA / SEPA / NRW)", command=lambda: self._load_preset("combined_uk_env_registers"))
+        templates_menu.add_separator()
+        templates_menu.add_command(label="🛣️ National Highways Leaders & Project Directors (UK)", command=lambda: self._load_preset("national_highways_leaders"))
+        templates_menu.add_command(label="🛣️ National Highways: Schemes, Tenders & Contacts", command=lambda: self._load_preset("national_highways_gov"))
+        templates_menu.add_command(label="🛣️ National Highways & Road Network Depots (UK)", command=lambda: self._load_preset("gen_highways"))
+        templates_menu.add_separator()
+        templates_menu.add_command(label="🔥 Fire & Rescue IT Leaders (UK)", command=lambda: self._load_preset("fire_it"))
+        templates_menu.add_command(label="🏥 NHS & Healthcare IT Heads", command=lambda: self._load_preset("nhs_it"))
+        templates_menu.add_command(label="🏛️ Local Council & Gov IT Directors", command=lambda: self._load_preset("gov_it"))
+        templates_menu.add_command(label="🚀 Tech Startup Founders / CTOs", command=lambda: self._load_preset("tech_founders"))
+        templates_menu.add_command(label="📦 Logistics & Distribution Warehouses", command=lambda: self._load_preset("gen_logistics"))
+        templates_menu.add_command(label="🚛 Commercial Transport & Fleet Depots", command=lambda: self._load_preset("gen_fleet"))
+        menubar.add_cascade(label="Templates", menu=templates_menu)
+
+        # 3. Tools Menu
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        tools_menu.add_command(label="🔑 Log in to Google (CAPTCHA Bypass)", command=self._open_google_login)
+        tools_menu.add_command(label="⚡ Batch Enrich Leads (Tab 2)", command=self._start_batch_enrich)
+        tools_menu.add_command(label="🔄 Reformat & Retry Studio (Tab 3)", command=lambda: self._open_reformat_retry_window("undeliverables"))
+        tools_menu.add_command(label="⚙️ Enrichment Settings", command=self._open_enrichment_settings)
+        menubar.add_cascade(label="Tools", menu=tools_menu)
+
+        # 4. Help Menu (User Guide & Walkthroughs)
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="📖 Complete Beginner's User Guide (In-App Reader)...", command=self._open_user_guide_dialog)
+        help_menu.add_command(label="🌐 Open USER_GUIDE.md in Default Viewer", command=self._open_user_guide_external)
+        help_menu.add_command(label="📄 Open README.md in Default Viewer", command=self._open_readme_external)
+        help_menu.add_separator()
+        help_menu.add_command(label="⚡ Quick Start 4-Step Walkthrough", command=self._show_quick_start_dialog)
+        help_menu.add_command(label="🛡️ Deliverability Badges & SMTP Guide", command=self._show_deliverability_guide)
+        help_menu.add_command(label="📥 Direct Open Data & Public Registers Guide", command=self._show_opendata_guide)
+        help_menu.add_separator()
+        help_menu.add_command(label="ℹ️ About Suite", command=self._show_about_dialog)
+        menubar.add_cascade(label="Help", menu=help_menu)
+
+        self.config(menu=menubar)
+
         main_frame = ttk.Frame(self, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
@@ -1155,13 +1090,21 @@ class GoogleLeadScraperSuite(tk.Tk):
         top_banner.pack(fill=tk.X, pady=(0, 8))
         
         banner_left = ttk.Frame(top_banner)
-        banner_left.pack(side=tk.LEFT)
+        banner_left.pack(side=tk.LEFT, fill=tk.X, expand=True)
         
         title_lbl = ttk.Label(banner_left, text="⚡ Multi-Engine Lead & Advanced Dork Suite", style="Header.TLabel")
         title_lbl.pack(anchor=tk.W)
         sub_lbl = ttk.Label(banner_left, text="Search Google, Bing, DuckDuckGo, Brave, Yahoo, Tor/Onion with precision Dorks, extract contacts, and export with 1 click.", style="SubHeader.TLabel")
         sub_lbl.pack(anchor=tk.W)
         
+        # Top Banner Quick Action Buttons
+        banner_right = ttk.Frame(top_banner)
+        banner_right.pack(side=tk.RIGHT)
+        
+        btn_guide = ttk.Button(banner_right, text="📖 User Guide & Walkthrough", style="Primary.TButton", command=self._open_user_guide_dialog)
+        btn_guide.pack(side=tk.RIGHT, padx=(0, 4))
+        ToolTip(btn_guide, "Open the complete interactive beginner's guide, dummy-proof walkthrough, and search strategies.")
+
         # --- Main Notebook (Tabs) ---
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
@@ -1181,12 +1124,17 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.notebook.add(self.tab_verifier, text=" 🛡️ Email & CSV Verifier (MX/SMTP) ")
         self._build_tab_verifier()
         
-        # Tab 4: Search Operators Cheat Sheet
+        # Tab 4: Direct Open Data & Public Registers (CSV/ZIP/Directories)
+        self.tab_opendata = ttk.Frame(self.notebook, padding="8")
+        self.notebook.add(self.tab_opendata, text=" 📥 Direct Open Data & Public Registers ")
+        self._build_tab_opendata()
+        
+        # Tab 5: Search Operators Cheat Sheet
         self.tab_cheatsheet = ttk.Frame(self.notebook, padding="8")
         self.notebook.add(self.tab_cheatsheet, text=" 📖 Search Operators Cheat Sheet ")
         self._build_tab_cheatsheet()
         
-        # Tab 5: Search Query History Log
+        # Tab 6: Search Query History Log
         self.tab_history = ttk.Frame(self.notebook, padding="8")
         self.notebook.add(self.tab_history, text=" 📜 Query History Log ")
         self._build_tab_history()
@@ -1259,12 +1207,21 @@ class GoogleLeadScraperSuite(tk.Tk):
         r_pre = ttk.Frame(engine_preset_frame)
         r_pre.pack(fill=tk.X, pady=(4, 0))
         
-        hl_pre = self._create_help_label(r_pre, "Load Template:", "Optional pre-configured industry search templates with ready-made dork keywords.")
+        hl_pre = self._create_help_label(r_pre, "Load Template:", "Pre-configured industry search templates (Targeted Profile Searches & Generalized Facility Queries).")
         hl_pre.pack(side=tk.LEFT)
         
         self.preset_var = tk.StringVar(value="custom")
         presets = [
             ("-- Clean / Blank Form --", "custom"),
+            ("--- ♻️ UK ENVIRONMENTAL REGISTERS (EA / SEPA / NRW) ---", "header_env"),
+            ("🏴󠁧󠁢󠁥󠁮󠁧󠁿 EA: Waste Permitting & Operations (England)", "ea_waste_ops"),
+            ("🏴󠁧󠁢󠁥󠁮󠁧󠁿 EA: Waste Carriers, Brokers & Dealers", "ea_waste_carriers"),
+            ("🏴󠁧󠁢󠁳󠁣󠁴󠁿 SEPA: Waste Carriers & Authorisations (Scotland)", "sepa_waste"),
+            ("🏴󠁧󠁢󠁷󠁬󠁳󠁿 NRW: Waste Permitting & Carriers (Wales)", "nrw_waste"),
+            ("🇬🇧 Combined UK Regulators (EA / SEPA / NRW)", "combined_uk_env_registers"),
+            ("🛣️ National Highways Leaders & Project Directors (UK)", "national_highways_leaders"),
+            ("🛣️ National Highways: Schemes, Tenders & Contacts", "national_highways_gov"),
+            ("--- 🎯 TARGETED PROFILE / SITE TEMPLATES ---", "header1"),
             ("Fire & Rescue IT Leaders (UK)", "fire_it"),
             ("NHS & Healthcare IT Heads", "nhs_it"),
             ("Local Council & Gov IT Directors", "gov_it"),
@@ -1278,10 +1235,20 @@ class GoogleLeadScraperSuite(tk.Tk):
             ("Confidential Salary & Budgets", "confidential_docs"),
             ("Server Configs & Exposed FTP", "server_configs"),
             ("Price/Number Range ($100..$500)", "number_range"),
-            ("PDF Resumes & CVs", "resumes")
+            ("PDF Resumes & CVs", "resumes"),
+            ("--- 🌐 GENERALIZED INDUSTRY & FACILITY SEARCHES ---", "header2"),
+            ("♻️ Materials Recovery & Waste Facilities (UK)", "gen_waste"),
+            ("🛣️ National Highways & Road Network Depots (UK)", "gen_highways"),
+            ("📦 Logistics & Distribution Warehouses", "gen_logistics"),
+            ("🚛 Commercial Transport & Fleet Depots", "gen_fleet"),
+            ("🏭 Manufacturing & Industrial Processing", "gen_manufacturing"),
+            ("⚡ Energy, Biomass & EfW Plants", "gen_energy"),
+            ("🖥️ Data Centers & Colocation Infrastructure", "gen_datacenters"),
+            ("🛢️ Chemical & Hazardous Storage (COMAH)", "gen_chemical"),
+            ("🏗️ Scrap Metal & Reprocessing Yards", "gen_scrap")
         ]
         
-        self.preset_combo = ttk.Combobox(r_pre, values=[p[0] for p in presets], state="readonly", width=34)
+        self.preset_combo = ttk.Combobox(r_pre, values=[p[0] for p in presets], state="readonly", width=38)
         self.preset_combo.current(0)
         self.preset_combo.pack(side=tk.LEFT, padx=(0, 8))
         self.preset_combo.bind("<<ComboboxSelected>>", self._on_preset_selected)
@@ -1294,181 +1261,30 @@ class GoogleLeadScraperSuite(tk.Tk):
         hist_lbl = ttk.Label(r_pre, text="📜 Recall Past Query:", style="Section.TLabel")
         hist_lbl.pack(side=tk.LEFT, padx=(5, 4))
         
-        self.history_combo = ttk.Combobox(r_pre, state="readonly", width=30)
+        self.history_combo = ttk.Combobox(r_pre, state="readonly", width=28)
         self._refresh_history_combo()
         self.history_combo.pack(side=tk.LEFT, padx=(0, 5))
         self.history_combo.bind("<<ComboboxSelected>>", self._on_history_combo_selected)
         ToolTip(self.history_combo, "Select any past logged search query to recall it directly into the builder.")
 
-        # 2. Builder Form Panes
-        form_frame = ttk.LabelFrame(self.tab_builder, text=" Search Criteria & Dork Parameters ", padding="8")
-        form_frame.pack(fill=tk.X, pady=(0, 8))
+        # 2. Builder Form Panes - Tabbed Criteria Selector
+        self.criteria_frame = ttk.LabelFrame(self.tab_builder, text=" 🎯 Search Criteria & Strategy Selector ", padding="6")
+        self.criteria_frame.pack(fill=tk.X, pady=(0, 8))
         
-        # Row 1: Target Platform / Site (MANUAL & PRESETS)
-        r1 = ttk.Frame(form_frame)
-        r1.pack(fill=tk.X, pady=2)
+        self.criteria_notebook = ttk.Notebook(self.criteria_frame, style="Sub.TNotebook")
+        self.criteria_notebook.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
         
-        hl_site = self._create_help_label(r1, "Target Site (site:):", "Restricts results to a specific website or domain. Type any domain manually or pick from presets.")
-        hl_site.pack(side=tk.LEFT)
+        # Sub-Tab 1: Targeted Site & Profile Search
+        self.subtab_targeted = ttk.Frame(self.criteria_notebook, padding="6")
+        self.criteria_notebook.add(self.subtab_targeted, text=" 🎯 Tab 1: Targeted Site & Profile Search (site:) ")
+        self._build_subtab_targeted()
         
-        self.site_preset_var = tk.StringVar(value="")
-        self.site_combo = ttk.Combobox(r1, textvariable=self.site_preset_var, width=32)
-        self.site_combo['values'] = (
-            "site:linkedin.com/in/",
-            "site:linkedin.com/company/",
-            "site:github.com",
-            "site:stackoverflow.com OR site:github.com",
-            "site:twitter.com OR site:x.com",
-            "site:gov.uk",
-            "site:facebook.com",
-            "site:*.gov",
-            "site:*.edu",
-            "(All Websites / Open Web)"
-        )
-        self.site_combo.pack(side=tk.LEFT, padx=(0, 6))
-        self.site_combo.bind("<KeyRelease>", lambda e: self._rebuild_query())
-        self.site_combo.bind("<<ComboboxSelected>>", lambda e: self._rebuild_query())
-        ToolTip(self.site_combo, "Type any custom domain (e.g. reddit.com, bbc.co.uk) or choose a preset.")
+        # Sub-Tab 2: Generalized Industry & Facility Search
+        self.subtab_generalized = ttk.Frame(self.criteria_notebook, padding="6")
+        self.criteria_notebook.add(self.subtab_generalized, text=" 🌐 Tab 2: Generalized Industry & Facility Search (Multi-Group Boolean) ")
+        self._build_subtab_generalized()
         
-        btn_wrap_site = ttk.Button(r1, text="+ Wrap site:", style="Secondary.TButton", command=self._wrap_site_syntax)
-        btn_wrap_site.pack(side=tk.LEFT, padx=(0, 6))
-        ToolTip(btn_wrap_site, "Automatically prefixes your typed domain with 'site:' (e.g., example.com -> site:example.com).")
-        
-        btn_clear_site = ttk.Button(r1, text="Clear (Open Web)", style="Secondary.TButton", command=lambda: (self.site_preset_var.set(""), self._rebuild_query()))
-        btn_clear_site.pack(side=tk.LEFT)
-        ToolTip(btn_clear_site, "Clears site restriction so search spans all websites on the open web.")
-        
-        # Row 2: Industry / Organization / intext
-        r2 = ttk.Frame(form_frame)
-        r2.pack(fill=tk.X, pady=2)
-        
-        hl_org = self._create_help_label(r2, "Industry / Keyword:", "Keywords, company names, or sectors to search for. E.g. \"Fire and Rescue\" or \"NHS Trust\".")
-        hl_org.pack(side=tk.LEFT)
-        
-        self.org_var = tk.StringVar(value="")
-        org_entry = ttk.Entry(r2, textvariable=self.org_var, font=("Segoe UI", 9), width=50)
-        org_entry.pack(side=tk.LEFT, padx=(0, 8), fill=tk.X, expand=True)
-        org_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
-        ToolTip(org_entry, "Enter comma-separated or quoted phrases. Click '+ Quotes/OR' to auto-format.")
-        
-        btn_org_add = ttk.Button(r2, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.org_var))
-        btn_org_add.pack(side=tk.RIGHT)
-        ToolTip(btn_org_add, "Converts comma-separated words into quoted OR group: (\"Word 1\" OR \"Word 2\").")
-        
-        # Row 3: Job Titles / Target Roles / intitle
-        r3 = ttk.Frame(form_frame)
-        r3.pack(fill=tk.X, pady=2)
-        
-        hl_titles = self._create_help_label(r3, "Job Titles / Roles:", "Job roles or positions to find. E.g. \"Head of IT\" OR \"CTO\" OR \"IT Director\".")
-        hl_titles.pack(side=tk.LEFT)
-        
-        self.titles_var = tk.StringVar(value="")
-        titles_entry = ttk.Entry(r3, textvariable=self.titles_var, font=("Segoe UI", 9), width=50)
-        titles_entry.pack(side=tk.LEFT, padx=(0, 8), fill=tk.X, expand=True)
-        titles_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
-        ToolTip(titles_entry, "Target job titles or role variations.")
-        
-        btn_title_add = ttk.Button(r3, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.titles_var))
-        btn_title_add.pack(side=tk.RIGHT)
-        ToolTip(btn_title_add, "Converts comma-separated titles into quoted OR group.")
-        
-        # Row 4: Location / Country / City
-        r4 = ttk.Frame(form_frame)
-        r4.pack(fill=tk.X, pady=2)
-        
-        hl_loc = self._create_help_label(r4, "Location / Region:", "Geographic filter for the search (e.g. \"United Kingdom\", \"London\", \"United States\").")
-        hl_loc.pack(side=tk.LEFT)
-        
-        self.location_var = tk.StringVar(value="")
-        loc_combo = ttk.Combobox(r4, textvariable=self.location_var, width=30)
-        loc_combo['values'] = (
-            '"United Kingdom"',
-            '"London" OR "Greater London"',
-            '"Manchester" OR "Birmingham" OR "Leeds"',
-            '"United States"',
-            '"Canada"',
-            '"Australia"',
-            '"Europe"',
-            '(Worldwide / No Location)'
-        )
-        loc_combo.pack(side=tk.LEFT, padx=(0, 10))
-        loc_combo.bind("<KeyRelease>", lambda e: self._rebuild_query())
-        loc_combo.bind("<<ComboboxSelected>>", lambda e: self._rebuild_query())
-        ToolTip(loc_combo, "Select or type any custom city, county, country, or region.")
-        
-        # Row 5: Contact Extractor Dorks & Extra Filters
-        r5 = ttk.Frame(form_frame)
-        r5.pack(fill=tk.X, pady=2)
-        
-        hl_contact = self._create_help_label(r5, "Contact / Email Filters:", "Appends contact hunting dorks to find emails or phone numbers in search snippets.")
-        hl_contact.pack(side=tk.LEFT)
-        
-        self.email_dork_var = tk.BooleanVar(value=False)
-        chk_email = ttk.Checkbutton(r5, text="Public Emails (@gmail, @outlook)", variable=self.email_dork_var, command=self._rebuild_query)
-        chk_email.pack(side=tk.LEFT, padx=(0, 12))
-        ToolTip(chk_email, "Appends (@gmail.com OR @outlook.com OR @yahoo.com) to find leads with public emails.")
-        
-        self.phone_dork_var = tk.BooleanVar(value=False)
-        chk_phone = ttk.Checkbutton(r5, text="Phone / Tel", variable=self.phone_dork_var, command=self._rebuild_query)
-        chk_phone.pack(side=tk.LEFT, padx=(0, 12))
-        ToolTip(chk_phone, "Appends (\"phone\" OR \"tel\" OR \"mobile\") to prioritize contacts with numbers.")
-        
-        self.custom_email_domain_var = tk.StringVar(value="")
-        custom_dom_lbl = ttk.Label(r5, text="Domain:")
-        custom_dom_lbl.pack(side=tk.LEFT, padx=(4, 2))
-        
-        custom_dom_entry = ttk.Entry(r5, textvariable=self.custom_email_domain_var, font=("Segoe UI", 9), width=16)
-        custom_dom_entry.pack(side=tk.LEFT, padx=(0, 5))
-        custom_dom_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
-        ToolTip(custom_dom_entry, "Search for company-specific email domain (e.g. acme.com or @acme.com).")
-        
-        # Row 6: Exclude Keywords & Filetype
-        r6 = ttk.Frame(form_frame)
-        r6.pack(fill=tk.X, pady=2)
-        
-        hl_exclude = self._create_help_label(r6, "Exclude Words (-):", "Excludes unwanted terms with the minus operator. E.g. -jobs -recruiter -intern.")
-        hl_exclude.pack(side=tk.LEFT)
-        
-        self.exclude_var = tk.StringVar(value="")
-        exclude_entry = ttk.Entry(r6, textvariable=self.exclude_var, font=("Segoe UI", 9), width=32)
-        exclude_entry.pack(side=tk.LEFT, padx=(0, 12))
-        exclude_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
-        ToolTip(exclude_entry, "Words prefixed with '-' will be excluded from search results.")
-        
-        hl_filetype = self._create_help_label(r6, "Filetype (filetype:):", "Filters for specific file formats like PDF resumes, Excel sheets, or configuration files.", width=16)
-        hl_filetype.pack(side=tk.LEFT)
-        
-        self.filetype_var = tk.StringVar(value="None")
-        filetype_combo = ttk.Combobox(r6, textvariable=self.filetype_var, values=["None", "filetype:pdf", "filetype:doc OR filetype:docx", "filetype:xls OR filetype:xlsx", "filetype:config", "filetype:env", "filetype:sql"], width=18, state="readonly")
-        filetype_combo.pack(side=tk.LEFT)
-        filetype_combo.bind("<<ComboboxSelected>>", lambda e: self._rebuild_query())
-        ToolTip(filetype_combo, "Select filetype extension to discover documents or files.")
-
-        # Row 7: Advanced Operators Toolbar (with Hover Tooltips)
-        r7 = ttk.Frame(form_frame)
-        r7.pack(fill=tk.X, pady=(4, 0))
-        
-        hl_ops = self._create_help_label(r7, "Quick Insert Operator:", "Click any operator button to insert it into your assembled query. Hover to see what each operator does.")
-        hl_ops.pack(side=tk.LEFT)
-        
-        dork_ops = [
-            ("intext:", ' intext:""', "intext:\"keyword\" — Searches for occurrences of keyword anywhere inside the webpage body text."),
-            ("intitle:", ' intitle:""', "intitle:\"keyword\" — Searches for keywords inside the webpage HTML title tag."),
-            ("inurl:", ' inurl:""', "inurl:\"keyword\" — Finds keywords present directly in the webpage URL path."),
-            ("site:", ' site:', "site:domain.com — Restricts search results to a specific website, domain, or TLD."),
-            ("filetype:", ' filetype:pdf', "filetype:extension — Filters search results for specific file formats (pdf, doc, xls, config, env, sql)."),
-            ("before:", ' before:2025-01-01', "before:YYYY-MM-DD — Returns only pages indexed before the specified date or year."),
-            ("after:", ' after:2023-01-01', "after:YYYY-MM-DD — Returns only pages indexed after the specified date or year."),
-            (".. (Range)", ' $100..$500', ".. — Searches for numbers within a range such as prices or years ($100..$500 or 2020..2024)."),
-            ("error:", ' error:""', "error:\"msg\" — Searches for exact programming error messages or stacktraces."),
-            ("related:", ' related:', "related:domain.com — Discovers websites structurally or semantically similar to target domain."),
-            ("cache:", ' cache:', "cache:domain.com — Retrieves Google's cached snapshot of a specific webpage."),
-            ("* (Wildcard)", ' *', "* — Wildcard acting as a placeholder for any unknown words or phrases in search.")
-        ]
-        for op_label, op_val, op_tip in dork_ops:
-            btn_op = ttk.Button(r7, text=op_label, style="Operator.TButton", command=lambda v=op_val: self._append_operator_to_query(v))
-            btn_op.pack(side=tk.LEFT, padx=1)
-            ToolTip(btn_op, op_tip)
+        self.criteria_notebook.bind("<<NotebookTabChanged>>", self._on_criteria_tab_changed)
 
         # 3. Live Assembled Dork Preview Box
         query_preview_frame = ttk.LabelFrame(self.tab_builder, text=" Live Assembled Search Query (Auto-Generated) ", padding="8")
@@ -1491,7 +1307,7 @@ class GoogleLeadScraperSuite(tk.Tk):
         btn_reset_query.pack(side=tk.LEFT, padx=(0, 15))
         ToolTip(btn_reset_query, "Clears all textboxes and query fields back to a blank canvas.")
         
-        lbl_hint_live = ttk.Label(preview_btn_bar, text="✨ Updates live as you change fields. You can also edit it directly in the text box above.", foreground="#64748B")
+        lbl_hint_live = ttk.Label(preview_btn_bar, text="✨ Updates live as you change fields in either tab. You can also edit it directly in the text box above.", foreground="#64748B")
         lbl_hint_live.pack(side=tk.LEFT)
         
         # 4. Search Execution Controls
@@ -1551,9 +1367,373 @@ class GoogleLeadScraperSuite(tk.Tk):
         hint_exec = ttk.Label(r_actions, text="💡 Mini Corner Window keeps Google docked as a tiny widget in the bottom corner so your screen stays clear.", foreground="#64748B", font=("Segoe UI", 8, "italic"))
         hint_exec.pack(side=tk.LEFT)
 
+    def _build_subtab_targeted(self):
+        """Builds Tab 1 of Search Criteria: Single site/profile dorking parameters (LinkedIn, gov.uk, etc.)."""
+        # Row 1: Target Platform / Site (MANUAL & PRESETS)
+        r1 = ttk.Frame(self.subtab_targeted)
+        r1.pack(fill=tk.X, pady=2)
+        
+        hl_site = self._create_help_label(r1, "Target Site (site:):", "Restricts results to a specific website or domain. Type any domain manually or pick from presets.")
+        hl_site.pack(side=tk.LEFT)
+        
+        self.site_preset_var = tk.StringVar(value="")
+        self.site_combo = ttk.Combobox(r1, textvariable=self.site_preset_var, width=32)
+        self.site_combo['values'] = (
+            "site:linkedin.com/in/",
+            "site:linkedin.com/company/",
+            "site:environment.data.gov.uk/public-register/",
+            "site:sepa.org.uk",
+            "site:naturalresources.wales",
+            "(site:environment.data.gov.uk/public-register/ OR site:sepa.org.uk OR site:naturalresources.wales)",
+            "site:nationalhighways.co.uk",
+            "site:nationalhighways.co.uk OR site:highwaysengland.co.uk",
+            "site:gov.uk",
+            "site:github.com",
+            "site:stackoverflow.com OR site:github.com",
+            "site:twitter.com OR site:x.com",
+            "site:facebook.com",
+            "site:*.gov",
+            "site:*.edu",
+            "(All Websites / Open Web)"
+        )
+        self.site_combo.pack(side=tk.LEFT, padx=(0, 6))
+        self.site_combo.bind("<KeyRelease>", lambda e: self._rebuild_query())
+        self.site_combo.bind("<<ComboboxSelected>>", lambda e: self._rebuild_query())
+        ToolTip(self.site_combo, "Type any custom domain (e.g. reddit.com, bbc.co.uk) or choose a preset.")
+        
+        btn_wrap_site = ttk.Button(r1, text="+ Wrap site:", style="Secondary.TButton", command=self._wrap_site_syntax)
+        btn_wrap_site.pack(side=tk.LEFT, padx=(0, 6))
+        ToolTip(btn_wrap_site, "Automatically prefixes your typed domain with 'site:' (e.g., example.com -> site:example.com).")
+        
+        btn_clear_site = ttk.Button(r1, text="Clear (Open Web)", style="Secondary.TButton", command=lambda: (self.site_preset_var.set(""), self._rebuild_query()))
+        btn_clear_site.pack(side=tk.LEFT)
+        ToolTip(btn_clear_site, "Clears site restriction so search spans all websites on the open web.")
+        
+        # Row 2: Industry / Organization / intext
+        r2 = ttk.Frame(self.subtab_targeted)
+        r2.pack(fill=tk.X, pady=2)
+        
+        hl_org = self._create_help_label(r2, "Industry / Keyword:", "Keywords, company names, or sectors to search for. E.g. \"Fire and Rescue\" or \"NHS Trust\".")
+        hl_org.pack(side=tk.LEFT)
+        
+        self.org_var = tk.StringVar(value="")
+        org_entry = ttk.Entry(r2, textvariable=self.org_var, font=("Segoe UI", 9), width=50)
+        org_entry.pack(side=tk.LEFT, padx=(0, 8), fill=tk.X, expand=True)
+        org_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
+        ToolTip(org_entry, "Enter comma-separated or quoted phrases. Click '+ Quotes/OR' to auto-format.")
+        
+        btn_org_add = ttk.Button(r2, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.org_var))
+        btn_org_add.pack(side=tk.RIGHT)
+        ToolTip(btn_org_add, "Converts comma-separated words into quoted OR group: (\"Word 1\" OR \"Word 2\").")
+        
+        # Row 3: Job Titles / Target Roles / intitle
+        r3 = ttk.Frame(self.subtab_targeted)
+        r3.pack(fill=tk.X, pady=2)
+        
+        hl_titles = self._create_help_label(r3, "Job Titles / Roles:", "Job roles or positions to find. E.g. \"Head of IT\" OR \"CTO\" OR \"IT Director\".")
+        hl_titles.pack(side=tk.LEFT)
+        
+        self.titles_var = tk.StringVar(value="")
+        titles_entry = ttk.Entry(r3, textvariable=self.titles_var, font=("Segoe UI", 9), width=50)
+        titles_entry.pack(side=tk.LEFT, padx=(0, 8), fill=tk.X, expand=True)
+        titles_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
+        ToolTip(titles_entry, "Target job titles or role variations.")
+        
+        btn_title_add = ttk.Button(r3, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.titles_var))
+        btn_title_add.pack(side=tk.RIGHT)
+        ToolTip(btn_title_add, "Converts comma-separated titles into quoted OR group.")
+        
+        # Row 4: Location / Country / City
+        r4 = ttk.Frame(self.subtab_targeted)
+        r4.pack(fill=tk.X, pady=2)
+        
+        hl_loc = self._create_help_label(r4, "Location / Region:", "Geographic filter for the search (e.g. \"United Kingdom\", \"London\", \"United States\").")
+        hl_loc.pack(side=tk.LEFT)
+        
+        self.location_var = tk.StringVar(value="")
+        loc_combo = ttk.Combobox(r4, textvariable=self.location_var, width=30)
+        loc_combo['values'] = (
+            '"United Kingdom"',
+            '"London" OR "Greater London"',
+            '"Manchester" OR "Birmingham" OR "Leeds"',
+            '"United States"',
+            '"Canada"',
+            '"Australia"',
+            '"Europe"',
+            '(Worldwide / No Location)'
+        )
+        loc_combo.pack(side=tk.LEFT, padx=(0, 10))
+        loc_combo.bind("<KeyRelease>", lambda e: self._rebuild_query())
+        loc_combo.bind("<<ComboboxSelected>>", lambda e: self._rebuild_query())
+        ToolTip(loc_combo, "Select or type any custom city, county, country, or region.")
+        
+        # Row 5: Contact Extractor Dorks & Extra Filters
+        r5 = ttk.Frame(self.subtab_targeted)
+        r5.pack(fill=tk.X, pady=2)
+        
+        hl_contact = self._create_help_label(r5, "Contact / Email Filters:", "Appends contact hunting dorks to find emails or phone numbers in search snippets.")
+        hl_contact.pack(side=tk.LEFT)
+        
+        self.email_dork_var = tk.BooleanVar(value=False)
+        chk_email = ttk.Checkbutton(r5, text="Public Emails (@gmail, @outlook)", variable=self.email_dork_var, command=self._rebuild_query)
+        chk_email.pack(side=tk.LEFT, padx=(0, 12))
+        ToolTip(chk_email, "Appends (@gmail.com OR @outlook.com OR @yahoo.com) to find leads with public emails.")
+        
+        self.phone_dork_var = tk.BooleanVar(value=False)
+        chk_phone = ttk.Checkbutton(r5, text="Phone / Tel", variable=self.phone_dork_var, command=self._rebuild_query)
+        chk_phone.pack(side=tk.LEFT, padx=(0, 12))
+        ToolTip(chk_phone, "Appends (\"phone\" OR \"tel\" OR \"mobile\") to prioritize contacts with numbers.")
+        
+        self.custom_email_domain_var = tk.StringVar(value="")
+        custom_dom_lbl = ttk.Label(r5, text="Domain:")
+        custom_dom_lbl.pack(side=tk.LEFT, padx=(4, 2))
+        
+        custom_dom_entry = ttk.Entry(r5, textvariable=self.custom_email_domain_var, font=("Segoe UI", 9), width=16)
+        custom_dom_entry.pack(side=tk.LEFT, padx=(0, 5))
+        custom_dom_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
+        ToolTip(custom_dom_entry, "Search for company-specific email domain (e.g. acme.com or @acme.com).")
+        
+        # Row 6: Exclude Keywords & Filetype
+        r6 = ttk.Frame(self.subtab_targeted)
+        r6.pack(fill=tk.X, pady=2)
+        
+        hl_exclude = self._create_help_label(r6, "Exclude Words (-):", "Excludes unwanted terms with the minus operator. E.g. -jobs -recruiter -intern.")
+        hl_exclude.pack(side=tk.LEFT)
+        
+        self.exclude_var = tk.StringVar(value="")
+        exclude_entry = ttk.Entry(r6, textvariable=self.exclude_var, font=("Segoe UI", 9), width=32)
+        exclude_entry.pack(side=tk.LEFT, padx=(0, 12))
+        exclude_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
+        ToolTip(exclude_entry, "Words prefixed with '-' will be excluded from search results.")
+        
+        hl_filetype = self._create_help_label(r6, "Filetype (filetype:):", "Filters for specific file formats like PDF resumes, Excel sheets, or configuration files.", width=16)
+        hl_filetype.pack(side=tk.LEFT)
+        
+        self.filetype_var = tk.StringVar(value="None")
+        filetype_combo = ttk.Combobox(r6, textvariable=self.filetype_var, values=["None", "filetype:pdf", "filetype:doc OR filetype:docx", "filetype:xls OR filetype:xlsx", "filetype:config", "filetype:env", "filetype:sql"], width=18, state="readonly")
+        filetype_combo.pack(side=tk.LEFT)
+        filetype_combo.bind("<<ComboboxSelected>>", lambda e: self._rebuild_query())
+        ToolTip(filetype_combo, "Select filetype extension to discover documents or files.")
+
+        # Row 7: Advanced Operators Toolbar (with Hover Tooltips)
+        r7 = ttk.Frame(self.subtab_targeted)
+        r7.pack(fill=tk.X, pady=(4, 0))
+        
+        hl_ops = self._create_help_label(r7, "Quick Insert Operator:", "Click any operator button to insert it into your assembled query. Hover to see what each operator does.")
+        hl_ops.pack(side=tk.LEFT)
+        
+        dork_ops = [
+            ("intext:", ' intext:""', "intext:\"keyword\" — Searches for occurrences of keyword anywhere inside the webpage body text."),
+            ("intitle:", ' intitle:""', "intitle:\"keyword\" — Searches for keywords inside the webpage HTML title tag."),
+            ("inurl:", ' inurl:""', "inurl:\"keyword\" — Finds keywords present directly in the webpage URL path."),
+            ("site:", ' site:', "site:domain.com — Restricts search results to a specific website, domain, or TLD."),
+            ("filetype:", ' filetype:pdf', "filetype:extension — Filters search results for specific file formats (pdf, doc, xls, config, env, sql)."),
+            ("before:", ' before:2025-01-01', "before:YYYY-MM-DD — Returns only pages indexed before the specified date or year."),
+            ("after:", ' after:2023-01-01', "after:YYYY-MM-DD — Returns only pages indexed after the specified date or year."),
+            (".. (Range)", ' $100..$500', ".. — Searches for numbers within a range such as prices or years ($100..$500 or 2020..2024)."),
+            ("error:", ' error:""', "error:\"msg\" — Searches for exact programming error messages or stacktraces."),
+            ("related:", ' related:', "related:domain.com — Discovers websites structurally or semantically similar to target domain."),
+            ("cache:", ' cache:', "cache:domain.com — Retrieves Google's cached snapshot of a specific webpage."),
+            ("* (Wildcard)", ' *', "* — Wildcard acting as a placeholder for any unknown words or phrases in search.")
+        ]
+        for op_label, op_val, op_tip in dork_ops:
+            btn_op = ttk.Button(r7, text=op_label, style="Operator.TButton", command=lambda v=op_val: self._append_operator_to_query(v))
+            btn_op.pack(side=tk.LEFT, padx=1)
+            ToolTip(btn_op, op_tip)
+
+    def _build_subtab_generalized(self):
+        """Builds Tab 2 of Search Criteria: Generalized multi-group boolean query builder for facilities & industry."""
+        # Strategy Intro & Quick Action Banner
+        intro_frame = ttk.Frame(self.subtab_generalized)
+        intro_frame.pack(fill=tk.X, pady=(0, 4))
+        
+        lbl_intro = ttk.Label(intro_frame, text="ℹ️ Strategy: Build broad multi-concept queries for facilities, depots, commercial sites & nationwide infrastructure with boolean OR groups and negative exclusions.", foreground="#475569", font=("Segoe UI", 8, "italic"))
+        lbl_intro.pack(side=tk.LEFT)
+        
+        btn_quick_waste = ttk.Button(intro_frame, text="⭐ Load Waste & Facility Example", style="Accent.TButton", command=self._load_waste_facility_example)
+        btn_quick_waste.pack(side=tk.RIGHT)
+        ToolTip(btn_quick_waste, "Instantly loads the Materials Recovery & Waste Facilities search with multiple sites, UK regions, and council exclusions.")
+
+        # Row 1: Facility / Industry / Sector Terms (Group 1 - OR)
+        r1 = ttk.Frame(self.subtab_generalized)
+        r1.pack(fill=tk.X, pady=2)
+        
+        hl_ind = self._create_help_label(r1, "Facility / Industry (OR):", "Group 1: Target facility types, industry activities, or site operations. Multiple terms are combined with OR.", width=21)
+        hl_ind.pack(side=tk.LEFT)
+        
+        gen_ind_entry = ttk.Entry(r1, textvariable=self.gen_industry_var, font=("Segoe UI", 9), width=38)
+        gen_ind_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
+        gen_ind_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
+        ToolTip(gen_ind_entry, 'Enter facility/industry terms e.g. ("Materials Recovery Facility" OR "waste transfer station" OR "commercial recycling facility") or comma-separated.')
+        
+        self.gen_category_combo = ttk.Combobox(r1, values=[
+            "Choose Preset Category...",
+            "♻️ Materials Recovery & Waste Facilities",
+            "📦 Logistics & Distribution Warehouses",
+            "🚛 Transport & Fleet Operating Depots",
+            "🏭 Industrial Manufacturing & Processing",
+            "⚡ Energy, Biomass & EfW Plants",
+            "🖥️ Data Centers & Colocation Facilities",
+            "🛢️ Chemical & Hazardous Storage (COMAH)",
+            "🏗️ Metal Recycling & Scrap Yards",
+            "(Clear Category)"
+        ], state="readonly", width=32)
+        self.gen_category_combo.current(0)
+        self.gen_category_combo.pack(side=tk.LEFT, padx=(0, 6))
+        self.gen_category_combo.bind("<<ComboboxSelected>>", self._on_gen_category_selected)
+        ToolTip(self.gen_category_combo, "Select pre-built facility or industry keyword groups.")
+        
+        btn_ind_add = ttk.Button(r1, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.gen_industry_var))
+        btn_ind_add.pack(side=tk.RIGHT)
+        ToolTip(btn_ind_add, "Converts comma-separated words into quoted OR group.")
+
+        # Row 2: Operational Scale & Multi-Site Scope (Group 2 - OR)
+        r2 = ttk.Frame(self.subtab_generalized)
+        r2.pack(fill=tk.X, pady=2)
+        
+        hl_scale = self._create_help_label(r2, "Scale / Multi-Site (OR):", "Group 2: Target footprint, multi-location indicators, depots, headquarters, or national operations.", width=21)
+        hl_scale.pack(side=tk.LEFT)
+        
+        gen_scale_entry = ttk.Entry(r2, textvariable=self.gen_scale_var, font=("Segoe UI", 9), width=38)
+        gen_scale_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
+        gen_scale_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
+        ToolTip(gen_scale_entry, 'Enter operational footprint terms e.g. ("multiple sites" OR "depots across" OR "nationwide" OR "head office").')
+        
+        self.gen_scale_combo = ttk.Combobox(r2, values=[
+            "Choose Scale...",
+            "🏢 Multi-Site, Depots & Nationwide",
+            "📍 Regional Hubs & Operating Centres",
+            "🏛️ Corporate HQ & Group Operations",
+            "🌐 UK-Wide & National Coverage",
+            "(None / Open Scale)"
+        ], state="readonly", width=32)
+        self.gen_scale_combo.current(0)
+        self.gen_scale_combo.pack(side=tk.LEFT, padx=(0, 6))
+        self.gen_scale_combo.bind("<<ComboboxSelected>>", self._on_gen_scale_selected)
+        ToolTip(self.gen_scale_combo, "Select pre-built operational footprint or scale filters.")
+        
+        btn_scale_add = ttk.Button(r2, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.gen_scale_var))
+        btn_scale_add.pack(side=tk.RIGHT)
+        ToolTip(btn_scale_add, "Converts comma-separated words into quoted OR group.")
+
+        # Row 3: Geographic & Country Filter (Group 3 - OR)
+        r3 = ttk.Frame(self.subtab_generalized)
+        r3.pack(fill=tk.X, pady=2)
+        
+        hl_geo = self._create_help_label(r3, "Country / Region (OR):", "Group 3: Target countries, home nations, counties, or regional territories.", width=21)
+        hl_geo.pack(side=tk.LEFT)
+        
+        gen_geo_entry = ttk.Entry(r3, textvariable=self.gen_geo_var, font=("Segoe UI", 9), width=38)
+        gen_geo_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
+        gen_geo_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
+        ToolTip(gen_geo_entry, 'Enter location terms e.g. ("United Kingdom" OR "UK" OR "England" OR "Scotland" OR "Wales").')
+        
+        self.gen_geo_combo = ttk.Combobox(r3, values=[
+            "Choose Region...",
+            "🇬🇧 United Kingdom & Home Nations",
+            "🏴󠁧󠁢󠁥󠁮󠁧󠁿 England & Greater London",
+            "🏴󠁧󠁢󠁳󠁣󠁴󠁿 Scotland & Northern Ireland",
+            "🇺🇸 United States Nationwide",
+            "🇪🇺 Europe & Major Nations",
+            "(Worldwide / Open Region)"
+        ], state="readonly", width=32)
+        self.gen_geo_combo.current(0)
+        self.gen_geo_combo.pack(side=tk.LEFT, padx=(0, 6))
+        self.gen_geo_combo.bind("<<ComboboxSelected>>", self._on_gen_geo_selected)
+        ToolTip(self.gen_geo_combo, "Select geographic and regional boundary filters.")
+        
+        btn_geo_add = ttk.Button(r3, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.gen_geo_var))
+        btn_geo_add.pack(side=tk.RIGHT)
+        ToolTip(btn_geo_add, "Converts comma-separated words into quoted OR group.")
+
+        # Row 4: Negative Exclusions & Cleaners (-)
+        r4 = ttk.Frame(self.subtab_generalized)
+        r4.pack(fill=tk.X, pady=2)
+        
+        hl_ex = self._create_help_label(r4, "Negative Exclusions (-):", "Words or domains prefixed with minus '-' will be completely removed from results (e.g. municipal tips, public council pages, job boards).", width=21)
+        hl_ex.pack(side=tk.LEFT)
+        
+        gen_ex_entry = ttk.Entry(r4, textvariable=self.gen_exclude_var, font=("Segoe UI", 9), width=38)
+        gen_ex_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
+        gen_ex_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
+        ToolTip(gen_ex_entry, 'Enter negative exclusion terms e.g. -council -civic -household -tip -hwrc -.gov.uk')
+        
+        self.gen_exclude_combo = ttk.Combobox(r4, values=[
+            "Choose Exclusion Pattern...",
+            "🛡️ Exclude Municipal/Council Tips & .gov.uk",
+            "🛡️ Exclude Council Tips + Job Boards",
+            "🛡️ Exclude Job & Recruitment Boards Only",
+            "🛡️ Exclude Public Sector / Government",
+            "🛡️ Exclude Directory & Aggregator Sites",
+            "(No Exclusions)"
+        ], state="readonly", width=32)
+        self.gen_exclude_combo.current(0)
+        self.gen_exclude_combo.pack(side=tk.LEFT, padx=(0, 6))
+        self.gen_exclude_combo.bind("<<ComboboxSelected>>", self._on_gen_exclude_selected)
+        ToolTip(self.gen_exclude_combo, "Select pre-configured negative exclusion cleaners.")
+        
+        btn_clear_ex = ttk.Button(r4, text="Clear Exclude", style="Secondary.TButton", command=lambda: (self.gen_exclude_var.set(""), self._rebuild_query()))
+        btn_clear_ex.pack(side=tk.RIGHT)
+        ToolTip(btn_clear_ex, "Clears negative exclusion filters.")
+
+        # Row 5: Optional Modifiers & Contact Filters
+        r5 = ttk.Frame(self.subtab_generalized)
+        r5.pack(fill=tk.X, pady=(3, 1))
+        
+        hl_mod = self._create_help_label(r5, "Optional Modifiers:", "Optional text or URL requirements, file types, or contact hunters.", width=21)
+        hl_mod.pack(side=tk.LEFT)
+        
+        # intext modifier
+        lbl_intext = ttk.Label(r5, text="intext:")
+        lbl_intext.pack(side=tk.LEFT, padx=(0, 2))
+        gen_intext_entry = ttk.Entry(r5, textvariable=self.gen_intext_var, width=12)
+        gen_intext_entry.pack(side=tk.LEFT, padx=(0, 8))
+        gen_intext_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
+        ToolTip(gen_intext_entry, "Optional keyword required in body text (e.g. permit or contact).")
+        
+        # inurl modifier
+        lbl_inurl = ttk.Label(r5, text="inurl:")
+        lbl_inurl.pack(side=tk.LEFT, padx=(0, 2))
+        gen_inurl_entry = ttk.Entry(r5, textvariable=self.gen_inurl_var, width=12)
+        gen_inurl_entry.pack(side=tk.LEFT, padx=(0, 8))
+        gen_inurl_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
+        ToolTip(gen_inurl_entry, "Optional keyword required in URL path (e.g. facilities or locations).")
+        
+        # Filetype
+        lbl_ft = ttk.Label(r5, text="filetype:")
+        lbl_ft.pack(side=tk.LEFT, padx=(0, 2))
+        gen_ft_combo = ttk.Combobox(r5, textvariable=self.gen_filetype_var, values=["None", "filetype:pdf", "filetype:xls OR filetype:xlsx", "filetype:doc OR filetype:docx"], width=13, state="readonly")
+        gen_ft_combo.pack(side=tk.LEFT, padx=(0, 8))
+        gen_ft_combo.bind("<<ComboboxSelected>>", lambda e: self._rebuild_query())
+        
+        # Public emails & phone dorks
+        chk_gen_email = ttk.Checkbutton(r5, text="Public Emails", variable=self.gen_email_dork_var, command=self._rebuild_query)
+        chk_gen_email.pack(side=tk.LEFT, padx=(0, 8))
+        ToolTip(chk_gen_email, "Appends public email hunting dork (@gmail.com OR @outlook.com OR @yahoo.com).")
+        
+        chk_gen_phone = ttk.Checkbutton(r5, text="Phone / Tel", variable=self.gen_phone_dork_var, command=self._rebuild_query)
+        chk_gen_phone.pack(side=tk.LEFT, padx=(0, 8))
+        ToolTip(chk_gen_phone, "Appends phone number indicator terms.")
+
+        # Row 6: Quick Generalized Toolbar
+        r6 = ttk.Frame(self.subtab_generalized)
+        r6.pack(fill=tk.X, pady=(4, 0))
+        
+        btn_reset_gen = ttk.Button(r6, text="🔄 Reset Generalized Form", style="Secondary.TButton", command=self._reset_generalized_form)
+        btn_reset_gen.pack(side=tk.LEFT, padx=(0, 8))
+        ToolTip(btn_reset_gen, "Clears all Generalized Search fields back to empty.")
+        
+        btn_copy_gen = ttk.Button(r6, text="📋 Copy Query", style="Secondary.TButton", command=self._copy_query_to_clipboard)
+        btn_copy_gen.pack(side=tk.LEFT, padx=(0, 8))
+        ToolTip(btn_copy_gen, "Copies assembled search query to clipboard.")
+        
+        lbl_tip_gen = ttk.Label(r6, text="💡 Click '🚀 Search & Extract Leads' below to execute this query across your selected search engine.", foreground="#64748B", font=("Segoe UI", 8, "italic"))
+        lbl_tip_gen.pack(side=tk.LEFT)
+
     def _reset_builder(self):
-        """Clears all textboxes, criteria fields, and search query to a completely blank state."""
+        """Clears all textboxes, criteria fields, and search query to a completely blank state across all tabs."""
         self._updating_query = True
+        # Targeted fields (Tab 1)
         self.site_preset_var.set("")
         self.org_var.set("")
         self.titles_var.set("")
@@ -1563,6 +1743,27 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.custom_email_domain_var.set("")
         self.exclude_var.set("")
         self.filetype_var.set("None")
+        
+        # Generalized fields (Tab 2)
+        self.gen_industry_var.set("")
+        self.gen_scale_var.set("")
+        self.gen_geo_var.set("")
+        self.gen_exclude_var.set("")
+        self.gen_intext_var.set("")
+        self.gen_inurl_var.set("")
+        self.gen_site_var.set("")
+        self.gen_filetype_var.set("None")
+        self.gen_email_dork_var.set(False)
+        self.gen_phone_dork_var.set(False)
+        if hasattr(self, "gen_category_combo"):
+            self.gen_category_combo.set("Choose Preset Category...")
+        if hasattr(self, "gen_scale_combo"):
+            self.gen_scale_combo.set("Choose Scale...")
+        if hasattr(self, "gen_geo_combo"):
+            self.gen_geo_combo.set("Choose Region...")
+        if hasattr(self, "gen_exclude_combo"):
+            self.gen_exclude_combo.set("Choose Exclusion Pattern...")
+            
         self.assembled_query_var.set("")
         if hasattr(self, "preset_combo"):
             self.preset_combo.current(0)
@@ -2075,6 +2276,59 @@ class GoogleLeadScraperSuite(tk.Tk):
             code_box.configure(state="readonly")
             code_box.pack(fill=tk.X)
 
+        # 5. UK Environmental Protection Agencies & Waste Registers
+        env_frame = ttk.LabelFrame(scrollable_frame, text=" ♻️ UK Environmental Protection Agencies & Waste Registers (EA / SEPA / NRW) ", padding="8")
+        env_frame.pack(fill=tk.X, pady=(0, 8), padx=4)
+        
+        env_recipes = [
+            (
+                "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Environment Agency: Waste Permitting & Operations (England)",
+                'site:environment.data.gov.uk/public-register/ ("Environmental Permitting Regulations – Waste Operations" OR "Materials recovery" OR "Waste transfer") -council -civic -household -tip -hwrc',
+                "Official EA public register for commercial materials recovery, waste transfer stations, and permitted facilities."
+            ),
+            (
+                "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Environment Agency: Waste Carriers, Brokers & Dealers (England)",
+                'site:environment.data.gov.uk/public-register/ "Register of Waste Carriers, Brokers and Dealers" ("Carrier and Broker" OR "Dealer") ("Limited" OR "Ltd" OR "PLC") -council -individual',
+                "Registered commercial waste carriers and brokers across England (filtered for Ltd/PLC registered companies)."
+            ),
+            (
+                "🏴󠁧󠁢󠁳󠁣󠁴󠁿 SEPA: Scottish Environment Protection Agency (Scotland)",
+                'site:sepa.org.uk ("Register of Waste Carriers" OR "authorisations" OR "waste transfer" OR "materials recovery") ("Limited" OR "Ltd" OR "PLC") -council',
+                "SEPA public register for waste transfer, recycling authorisations, and commercial carriers in Scotland."
+            ),
+            (
+                "🏴󠁧󠁢󠁷󠁬󠁳󠁿 Natural Resources Wales / Cyfoeth Naturiol Cymru (Wales)",
+                'site:naturalresources.wales ("waste permitting" OR "waste carriers, brokers and dealers" OR "waste transfer") ("Limited" OR "Ltd" OR "PLC") -council -cyngor',
+                "NRW official waste permitting and carrier register in Wales with bilingual council exclusions."
+            ),
+            (
+                "🇬🇧 Combined UK Regulators (EA England + SEPA Scotland + NRW Wales)",
+                '(site:environment.data.gov.uk/public-register/ OR site:sepa.org.uk OR site:naturalresources.wales) ("waste operations" OR "materials recovery" OR "waste transfer station" OR "waste carrier") ("Limited" OR "Ltd" OR "PLC") -council -cyngor -civic -household -tip -hwrc',
+                "Cross-UK unified register search across England, Scotland, and Wales for commercial waste operators."
+            )
+        ]
+        
+        for title, dork, desc in env_recipes:
+            item_frame = ttk.Frame(env_frame, padding="4")
+            item_frame.pack(fill=tk.X, pady=2)
+            
+            top_line = ttk.Frame(item_frame)
+            top_line.pack(fill=tk.X)
+            
+            t_lbl = ttk.Label(top_line, text=title, font=("Segoe UI", 9, "bold"), foreground="#0F172A")
+            t_lbl.pack(side=tk.LEFT)
+            
+            btn_load = ttk.Button(top_line, text="⚡ Load into Builder", style="Primary.TButton", command=lambda d=dork: self._load_custom_dork(d))
+            btn_load.pack(side=tk.RIGHT)
+            
+            d_lbl = ttk.Label(item_frame, text=desc, foreground="#64748B", font=("Segoe UI", 8))
+            d_lbl.pack(anchor=tk.W, pady=(1, 2))
+            
+            code_box = ttk.Entry(item_frame, font=("Consolas", 8), foreground="#1E293B")
+            code_box.insert(0, dork)
+            code_box.configure(state="readonly")
+            code_box.pack(fill=tk.X)
+
     # -------------------------------------------------------------
     # TAB 4: QUERY HISTORY LOG
     # -------------------------------------------------------------
@@ -2141,8 +2395,15 @@ class GoogleLeadScraperSuite(tk.Tk):
     # HISTORY LOGGING & RECALL ENGINE
     # -------------------------------------------------------------
     def _load_search_history(self):
-        """Loads search query history lines from file."""
+        """Loads search query history lines from SQLite storage with file fallback."""
         history = []
+        db_entries = storage.get_search_history(150)
+        if db_entries:
+            for item in db_entries:
+                entry_str = f"[{item.get('timestamp', '')}] [{item.get('engine', 'Google')}] {item.get('query', '')}"
+                history.append(entry_str)
+            return history
+
         if os.path.exists(HISTORY_LOG_FILE):
             try:
                 with open(HISTORY_LOG_FILE, "r", encoding="utf-8") as f:
@@ -3408,7 +3669,7 @@ class GoogleLeadScraperSuite(tk.Tk):
             dialog.after(0, btn_verify_reformat.configure, {"state": tk.NORMAL})
             dialog.after(0, btn_stop_reformat.configure, {"state": tk.DISABLED})
             dialog.after(0, refresh_dialog_display)
-            dialog.after(0, messagebox.showinfo, "✅ Reformat Verification Finished",
+            dialog.after(0, lambda: messagebox.showinfo("✅ Reformat Verification Finished",
                 f"✅ Reformatted Email Verification Finished!\n\n"
                 f"Total Tested: {total}\n"
                 f"🟢 Deliverable (250 OK): {deliv_c}\n"
@@ -3416,7 +3677,7 @@ class GoogleLeadScraperSuite(tk.Tk):
                 f"🔴 Undeliverable: {undeliv_c}\n\n"
                 f"Click '📥 Apply & Update Main Table' to replace with deliverable emails.",
                 parent=dialog
-            )
+            ))
 
         def apply_to_main_table():
             applied_cnt = 0
@@ -3575,14 +3836,14 @@ class GoogleLeadScraperSuite(tk.Tk):
             dialog.after(0, btn_waterfall_all.configure, {"state": tk.NORMAL})
             dialog.after(0, btn_stop_reformat.configure, {"state": tk.DISABLED})
             dialog.after(0, refresh_dialog_display)
-            dialog.after(0, messagebox.showinfo, "✨ Auto-Waterfall Finished",
+            dialog.after(0, lambda: messagebox.showinfo("✨ Auto-Waterfall Finished",
                 f"✨ Auto-Waterfall Complete!\n\n"
                 f"Total Processed: {total}\n"
                 f"🟢 Deliverable Found (250 OK): {deliv_c}\n"
                 f"🔴 Undeliverable (All Formats Failed): {undeliv_c}\n\n"
                 f"Click '📥 Apply & Update Main Table' to replace with the discovered deliverable emails.",
                 parent=dialog
-            )
+            ))
 
         d_tree.bind("<Double-1>", on_dialog_double_click)
         btn_verify_reformat.configure(command=start_dialog_verification)
@@ -3596,12 +3857,1240 @@ class GoogleLeadScraperSuite(tk.Tk):
         populate_records()
 
     # -------------------------------------------------------------
+    # TAB: DIRECT OPEN DATA & PUBLIC REGISTERS (CSV / ZIP / DIRECTORIES)
+    # -------------------------------------------------------------
+    def _build_tab_opendata(self):
+        # 1. Header & Strategy Description
+        od_header = ttk.Label(self.tab_opendata, text="📥 Direct Open Data & Public Registry Downloader", style="Header.TLabel")
+        od_header.pack(anchor=tk.W, pady=(0, 2))
+        
+        od_sub = ttk.Label(self.tab_opendata, text="Direct bulk download of official open-data registers (CSV/ZIP) & directories. Bypasses search engines and CAPTCHAs entirely.", style="SubHeader.TLabel")
+        od_sub.pack(anchor=tk.W, pady=(0, 6))
+
+        # 2. Frame A: Saved Registry Sources & Portals
+        src_frame = ttk.LabelFrame(self.tab_opendata, text=" 📜 Saved Registry Sources & Portals (Environment Agency, SEPA, NRW, NFCC) ", padding="8")
+        src_frame.pack(fill=tk.X, pady=(0, 6))
+        
+        # Row 1: Combobox + Action Buttons
+        r_src = ttk.Frame(src_frame)
+        r_src.pack(fill=tk.X, pady=(0, 4))
+        
+        hl_src = self._create_help_label(r_src, "Select Source:", "Choose an official registry source or any custom link you previously saved.", width=14)
+        hl_src.pack(side=tk.LEFT)
+        
+        source_names = [s.get("name", "Unknown") for s in self.opendata_sources]
+        self.opendata_source_combo = ttk.Combobox(r_src, values=source_names, textvariable=self.opendata_selected_var, state="readonly", width=48)
+        if source_names:
+            self.opendata_source_combo.current(0)
+        self.opendata_source_combo.pack(side=tk.LEFT, padx=(0, 8))
+        self.opendata_source_combo.bind("<<ComboboxSelected>>", self._on_opendata_source_selected)
+        ToolTip(self.opendata_source_combo, "Select a pre-configured open-data register or any custom link you saved.")
+        
+        btn_load_src = ttk.Button(r_src, text="⚡ Load Source", style="Secondary.TButton", command=self._on_opendata_source_selected)
+        btn_load_src.pack(side=tk.LEFT, padx=(0, 6))
+        ToolTip(btn_load_src, "Populates the selected registry URL and details into the fetcher form below.")
+        
+        btn_open_web = ttk.Button(r_src, text="🌐 Open in Browser", style="Secondary.TButton", command=self._open_opendata_in_browser)
+        btn_open_web.pack(side=tk.LEFT, padx=(0, 8))
+        ToolTip(btn_open_web, "Opens the official register or portal web page directly in your default browser.")
+        
+        btn_save_src = ttk.Button(r_src, text="💾 Save to List", style="Secondary.TButton", command=self._save_current_opendata_source)
+        btn_save_src.pack(side=tk.LEFT, padx=(0, 6))
+        ToolTip(btn_save_src, "Saves whatever URL & Label you typed into your permanent saved registry sources.")
+        
+        btn_del_src = ttk.Button(r_src, text="🗑️ Delete Source", style="Secondary.TButton", command=self._delete_current_opendata_source)
+        btn_del_src.pack(side=tk.LEFT, padx=(0, 6))
+        ToolTip(btn_del_src, "Deletes the currently selected source from the saved list.")
+
+        btn_reset_src = ttk.Button(r_src, text="🔄 Reset Defaults", style="Secondary.TButton", command=self._reset_opendata_sources_defaults)
+        btn_reset_src.pack(side=tk.LEFT)
+        ToolTip(btn_reset_src, "Restores the built-in official registry sources (EA, SEPA, NRW, NFCC).")
+
+        # Row 2: Live Description Badge
+        self.opendata_desc_lbl = ttk.Label(src_frame, text="", foreground="#64748B", font=("Segoe UI", 8, "italic"), wraplength=1000)
+        self.opendata_desc_lbl.pack(anchor=tk.W, pady=(2, 0))
+        self._update_opendata_desc_label()
+
+        # 3. Frame B: Custom URL Input & Direct Fetcher
+        fetch_frame = ttk.LabelFrame(self.tab_opendata, text=" 📥 Custom Registry URL / Direct Archive Fetcher ", padding="8")
+        fetch_frame.pack(fill=tk.X, pady=(0, 6))
+        
+        # Row 1: URL & Label Inputs
+        r_url = ttk.Frame(fetch_frame)
+        r_url.pack(fill=tk.X, pady=(0, 4))
+        
+        hl_url = self._create_help_label(r_url, "Registry URL:", "Paste ANY URL: direct .csv or .zip link, API endpoint, or public directory webpage (e.g. NFCC or SEPA).", width=14)
+        hl_url.pack(side=tk.LEFT)
+        
+        url_entry = ttk.Entry(r_url, textvariable=self.opendata_url_var, font=("Consolas", 9), width=50)
+        url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        ToolTip(url_entry, "Paste a direct download URL (.zip, .csv) or web directory page URL (e.g. https://nfcc.org.uk/contacts/chief-fire-officers/).")
+        
+        lbl_name = ttk.Label(r_url, text="Label / Name:")
+        lbl_name.pack(side=tk.LEFT, padx=(0, 4))
+        
+        name_entry = ttk.Entry(r_url, textvariable=self.opendata_name_var, font=("Segoe UI", 9), width=24)
+        name_entry.pack(side=tk.LEFT, padx=(0, 8))
+        ToolTip(name_entry, "Friendly name for this registry (used when saving to presets).")
+        
+        btn_pick_local = ttk.Button(r_url, text="📂 Local File...", style="Secondary.TButton", command=self._pick_opendata_local_file)
+        btn_pick_local.pack(side=tk.LEFT)
+        ToolTip(btn_pick_local, "Select any locally downloaded .csv or .zip register file from your computer.")
+
+        # Row 2: Controls + Fetch Button + Progress
+        r_ctrl = ttk.Frame(fetch_frame)
+        r_ctrl.pack(fill=tk.X, pady=(2, 0))
+        
+        hl_max = self._create_help_label(r_ctrl, "Max Rows:", "Maximum number of records to load into memory/preview table.", width=14)
+        hl_max.pack(side=tk.LEFT)
+        
+        max_spin = ttk.Spinbox(r_ctrl, from_=50, to=50000, increment=250, textvariable=self.opendata_max_rows_var, width=6)
+        max_spin.pack(side=tk.LEFT, padx=(0, 12))
+        ToolTip(max_spin, "Maximum rows to load (e.g. 500, 2000, 10000). Set higher for full national datasets.")
+        
+        self.btn_fetch_opendata = ttk.Button(r_ctrl, text="📥 Fetch & Download Data", style="Primary.TButton", command=self._start_fetch_opendata)
+        self.btn_fetch_opendata.pack(side=tk.LEFT, padx=(0, 8))
+        ToolTip(self.btn_fetch_opendata, "Directly downloads archive/CSV or extracts structured HTML directory tables.")
+        
+        self.btn_stop_opendata = ttk.Button(r_ctrl, text="⏹ Stop Fetch", style="Danger.TButton", command=self._stop_fetch_opendata, state=tk.DISABLED)
+        self.btn_stop_opendata.pack(side=tk.LEFT, padx=(0, 12))
+        
+        self.opendata_prog = ttk.Progressbar(r_ctrl, mode="indeterminate", length=140)
+        self.opendata_prog.pack(side=tk.LEFT, padx=(0, 10))
+        
+        self.opendata_status_var = tk.StringVar(value="Ready. Select a preset or paste a link, then click 'Fetch & Download Data'.")
+        lbl_od_stat = ttk.Label(r_ctrl, textvariable=self.opendata_status_var, font=("Segoe UI", 8, "italic"), foreground="#475569")
+        lbl_od_stat.pack(side=tk.LEFT)
+
+        # 4. Frame C: Interactive Preview Table & Filter
+        table_frame = ttk.LabelFrame(self.tab_opendata, text=" 📊 Dataset Preview & Interactive Table ", padding="6")
+        table_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 6))
+        
+        # Filter & Count Bar
+        f_bar = ttk.Frame(table_frame)
+        f_bar.pack(fill=tk.X, pady=(0, 4))
+        
+        lbl_filter = ttk.Label(f_bar, text="🔍 Search Filter:")
+        lbl_filter.pack(side=tk.LEFT, padx=(0, 4))
+        
+        self.opendata_filter_entry = ttk.Entry(f_bar, textvariable=self.opendata_filter_var, font=("Segoe UI", 9), width=24)
+        self.opendata_filter_entry.pack(side=tk.LEFT, padx=(0, 8))
+        self.opendata_filter_var.trace_add("write", lambda *args: self._refresh_opendata_table())
+        ToolTip(self.opendata_filter_entry, "Filter live records by any keyword, business name, permit, or location.")
+        
+        btn_clr_filter = ttk.Button(f_bar, text="🔄 Clear Filter", style="Secondary.TButton", command=lambda: (self.opendata_filter_var.set(""), self._refresh_opendata_table()))
+        btn_clr_filter.pack(side=tk.LEFT, padx=(0, 12))
+        
+        self.opendata_count_badge = ttk.Label(f_bar, text="0 records loaded", style="Badge.TLabel")
+        self.opendata_count_badge.pack(side=tk.RIGHT)
+        
+        # Scrollable Treeview Container
+        tree_container = ttk.Frame(table_frame)
+        tree_container.pack(fill=tk.BOTH, expand=True)
+        
+        self.opendata_tree = ttk.Treeview(tree_container, show="headings", selectmode="extended")
+        
+        sb_y = ttk.Scrollbar(tree_container, orient="vertical", command=self.opendata_tree.yview)
+        sb_x = ttk.Scrollbar(tree_container, orient="horizontal", command=self.opendata_tree.xview)
+        
+        self.opendata_tree.configure(yscrollcommand=sb_y.set, xscrollcommand=sb_x.set)
+        
+        sb_y.pack(side=tk.RIGHT, fill=tk.Y)
+        sb_x.pack(side=tk.BOTTOM, fill=tk.X)
+        self.opendata_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # 5. Frame D: Action & Bridge Toolbar
+        action_frame = ttk.Frame(self.tab_opendata)
+        action_frame.pack(fill=tk.X)
+        
+        btn_send_leads = ttk.Button(action_frame, text="⚡ Send Records to Leads Table (Tab 2)", style="Primary.TButton", command=self._send_opendata_to_leads)
+        btn_send_leads.pack(side=tk.LEFT, padx=(0, 8))
+        ToolTip(btn_send_leads, "Maps loaded registry entities into Tab 2 so you can instantly run '⚡ Batch Enrich' to synthesize & verify emails.")
+        
+        btn_send_verif = ttk.Button(action_frame, text="⚡ Send to Email Verifier (Tab 3)", style="Secondary.TButton", command=self._send_opendata_to_verifier)
+        btn_send_verif.pack(side=tk.LEFT, padx=(0, 8))
+        ToolTip(btn_send_verif, "Bridges loaded contacts/emails directly into Tab 3 for MX/SMTP deliverability checking.")
+        
+        btn_export_csv = ttk.Button(action_frame, text="💾 Export Dataset as CSV", style="Secondary.TButton", command=self._export_opendata_csv)
+        btn_export_csv.pack(side=tk.LEFT, padx=(0, 8))
+        ToolTip(btn_export_csv, "Saves the loaded or filtered dataset to a clean CSV file on your disk.")
+        
+        btn_clear_tbl = ttk.Button(action_frame, text="🗑️ Clear Table", style="Secondary.TButton", command=self._clear_opendata_table)
+        btn_clear_tbl.pack(side=tk.RIGHT)
+        ToolTip(btn_clear_tbl, "Clears loaded dataset from memory and table.")
+
+    def _update_opendata_desc_label(self):
+        sel_name = self.opendata_selected_var.get()
+        for s in self.opendata_sources:
+            if s.get("name") == sel_name:
+                desc = s.get("description", "")
+                cat = s.get("category", "")
+                self.opendata_desc_lbl.configure(text=f"📌 {cat}: {desc}")
+                return
+        self.opendata_desc_lbl.configure(text="📌 Custom Registry Dataset Source")
+
+    def _on_opendata_source_selected(self, event=None):
+        sel_name = self.opendata_selected_var.get()
+        for s in self.opendata_sources:
+            if s.get("name") == sel_name:
+                self.opendata_url_var.set(s.get("url", ""))
+                self.opendata_name_var.set(s.get("name", ""))
+                self._update_opendata_desc_label()
+                self.opendata_status_var.set(f"Selected '{s.get('name')}'. Ready to fetch.")
+                return
+
+    def _open_opendata_in_browser(self):
+        sel_name = self.opendata_selected_var.get()
+        target_url = self.opendata_url_var.get().strip()
+        for s in self.opendata_sources:
+            if s.get("name") == sel_name:
+                target_url = s.get("web_url") or s.get("url") or target_url
+                break
+        if target_url:
+            webbrowser.open(target_url)
+            self.status_var.set(f"Opening {target_url} in browser...")
+        else:
+            messagebox.showwarning("No URL", "Please select a registry source or enter a URL first.")
+
+    def _save_current_opendata_source(self):
+        url = self.opendata_url_var.get().strip()
+        name = self.opendata_name_var.get().strip()
+        if not url:
+            messagebox.showwarning("Missing URL", "Please enter a valid Registry URL to save.")
+            return
+        if not name:
+            name = f"Custom: {url[:30]}"
+            self.opendata_name_var.set(name)
+        
+        # Check if updating existing
+        existing = False
+        for s in self.opendata_sources:
+            if s.get("name") == name or s.get("url") == url:
+                s["name"] = name
+                s["url"] = url
+                s["web_url"] = url
+                existing = True
+                break
+        if not existing:
+            self.opendata_sources.append({
+                "name": name,
+                "url": url,
+                "web_url": url,
+                "category": "User Saved",
+                "description": f"Custom user-added open dataset from {url}"
+            })
+            
+        save_registry_sources(self.opendata_sources)
+        names = [s.get("name", "Unknown") for s in self.opendata_sources]
+        self.opendata_source_combo.configure(values=names)
+        self.opendata_selected_var.set(name)
+        self._update_opendata_desc_label()
+        messagebox.showinfo("Saved", f"Saved '{name}' to your permanent registry sources!")
+
+    def _delete_current_opendata_source(self):
+        sel_name = self.opendata_selected_var.get()
+        if not sel_name:
+            return
+        if len(self.opendata_sources) <= 1:
+            messagebox.showwarning("Cannot Delete", "Cannot delete the only remaining source.")
+            return
+        confirm = messagebox.askyesno("Delete Source", f"Are you sure you want to remove '{sel_name}' from your saved sources?")
+        if confirm:
+            self.opendata_sources = [s for s in self.opendata_sources if s.get("name") != sel_name]
+            save_registry_sources(self.opendata_sources)
+            names = [s.get("name", "Unknown") for s in self.opendata_sources]
+            self.opendata_source_combo.configure(values=names)
+            if names:
+                self.opendata_source_combo.current(0)
+                self._on_opendata_source_selected()
+            messagebox.showinfo("Deleted", f"Removed '{sel_name}' from saved registry sources.")
+
+    def _reset_opendata_sources_defaults(self):
+        confirm = messagebox.askyesno("Reset Defaults", "Reset saved registry sources back to official defaults (EA, SEPA, NRW, NFCC)?")
+        if confirm:
+            self.opendata_sources = list(DEFAULT_REGISTRY_SOURCES)
+            save_registry_sources(self.opendata_sources)
+            names = [s.get("name", "Unknown") for s in self.opendata_sources]
+            self.opendata_source_combo.configure(values=names)
+            if names:
+                self.opendata_source_combo.current(0)
+                self._on_opendata_source_selected()
+            messagebox.showinfo("Reset", "Registry sources restored to defaults.")
+
+    def _pick_opendata_local_file(self):
+        path = filedialog.askopenfilename(
+            title="Select Open Data File",
+            filetypes=[("Data Archives & CSVs", "*.csv *.zip *.tsv *.txt *.xlsx"), ("All Files", "*.*")]
+        )
+        if path:
+            self.opendata_url_var.set(path)
+            self.opendata_name_var.set(os.path.basename(path))
+            self.opendata_status_var.set(f"Loaded local path: {os.path.basename(path)}. Click 'Fetch & Download Data' to parse.")
+
+    def _start_fetch_opendata(self):
+        url = self.opendata_url_var.get().strip()
+        if not url:
+            messagebox.showwarning("Missing URL", "Please enter a URL or select a local dataset file first.")
+            return
+        if self.opendata_is_fetching:
+            return
+            
+        self.opendata_is_fetching = True
+        self.opendata_stop_requested = False
+        self.btn_fetch_opendata.configure(state=tk.DISABLED)
+        self.btn_stop_opendata.configure(state=tk.NORMAL)
+        self.opendata_prog.start(10)
+        self.opendata_status_var.set(f"Connecting and downloading from {url[:50]}...")
+        
+        max_rows = self.opendata_max_rows_var.get()
+        threading.Thread(target=self._fetch_opendata_worker, args=(url, max_rows), daemon=True).start()
+
+    def _stop_fetch_opendata(self):
+        self.opendata_stop_requested = True
+        self.opendata_is_fetching = False
+        self.opendata_status_var.set("Fetch cancelled by user.")
+        self.btn_fetch_opendata.configure(state=tk.NORMAL)
+        self.btn_stop_opendata.configure(state=tk.DISABLED)
+        self.opendata_prog.stop()
+
+    def _fetch_opendata_worker(self, url, max_rows):
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'}
+        parsed_headers = []
+        parsed_rows = []
+        err_msg = ""
+        
+        try:
+            # 1. Local File Check
+            if os.path.isfile(url):
+                if url.lower().endswith('.zip'):
+                    with zipfile.ZipFile(url, 'r') as z:
+                        csv_files = [n for n in z.namelist() if n.lower().endswith('.csv')]
+                        if csv_files:
+                            with z.open(csv_files[0]) as f:
+                                reader = csv.reader(io.TextIOWrapper(f, encoding='utf-8', errors='ignore'))
+                                parsed_headers = next(reader)
+                                for idx, row in enumerate(reader):
+                                    if self.opendata_stop_requested or idx >= max_rows: break
+                                    parsed_rows.append(row)
+                else:
+                    with open(url, 'r', encoding='utf-8', errors='ignore') as f:
+                        reader = csv.reader(f)
+                        parsed_headers = next(reader)
+                        for idx, row in enumerate(reader):
+                            if self.opendata_stop_requested or idx >= max_rows: break
+                            parsed_rows.append(row)
+            else:
+                # 2. Remote HTTP Download
+                resp = requests.get(url, headers=headers, timeout=25, stream=True)
+                if resp.status_code != 200:
+                    err_msg = f"HTTP {resp.status_code}: {resp.reason}"
+                else:
+                    content_type = resp.headers.get('Content-Type', '').lower()
+                    raw_bytes = resp.content
+                    
+                    # Check if ZIP Archive
+                    if 'zip' in content_type or url.lower().endswith('.zip') or raw_bytes[:4] == b'PK\x03\x04':
+                        with zipfile.ZipFile(io.BytesIO(raw_bytes)) as z:
+                            csv_files = [n for n in z.namelist() if n.lower().endswith('.csv')]
+                            if csv_files:
+                                with z.open(csv_files[0]) as f:
+                                    reader = csv.reader(io.TextIOWrapper(f, encoding='utf-8', errors='ignore'))
+                                    parsed_headers = next(reader)
+                                    for idx, row in enumerate(reader):
+                                        if self.opendata_stop_requested or idx >= max_rows: break
+                                        parsed_rows.append(row)
+                            else:
+                                err_msg = "ZIP file downloaded successfully, but contained no .csv data files."
+                                
+                    # Check if Direct CSV / Plain Text
+                    elif 'text/csv' in content_type or url.lower().endswith('.csv') or (',' in resp.text[:200] and '\n' in resp.text[:200] and not '<html' in resp.text[:200].lower()):
+                        reader = csv.reader(io.StringIO(resp.text))
+                        parsed_headers = next(reader)
+                        for idx, row in enumerate(reader):
+                            if self.opendata_stop_requested or idx >= max_rows: break
+                            parsed_rows.append(row)
+                            
+                    # Check if HTML Directory or Portal
+                    elif 'html' in content_type or '<html' in resp.text.lower():
+                        soup = BeautifulSoup(resp.text, 'html.parser')
+                        tables = soup.find_all('table')
+                        
+                        # If HTML table present (e.g. NFCC Chief Fire Officers)
+                        if tables:
+                            table = tables[0]
+                            th_cells = table.find_all('th')
+                            if th_cells:
+                                parsed_headers = [th.get_text(strip=True) for th in th_cells]
+                            
+                            for tr in table.find_all('tr'):
+                                if self.opendata_stop_requested or len(parsed_rows) >= max_rows: break
+                                td_cells = tr.find_all('td')
+                                if td_cells:
+                                    parsed_rows.append([td.get_text(strip=True) for td in td_cells])
+                                    
+                            if not parsed_headers and parsed_rows:
+                                if len(parsed_rows[0]) == 2:
+                                    parsed_headers = ["Name / Official", "Organisation / Fire Service"]
+                                else:
+                                    parsed_headers = [f"Column_{i+1}" for i in range(len(parsed_rows[0]))]
+                        else:
+                            # Look for downloadable links on the webpage
+                            found_download_url = None
+                            for a in soup.find_all('a', href=True):
+                                href = a['href']
+                                text = a.get_text(strip=True).lower()
+                                if any(ext in href.lower() for ext in ['.zip', '.csv', '/downloads/']) or 'download' in text:
+                                    found_download_url = urllib.parse.urljoin(url, href)
+                                    break
+                            if found_download_url and found_download_url != url:
+                                # Fetch nested link
+                                sub_r = requests.get(found_download_url, headers=headers, timeout=25)
+                                if sub_r.status_code == 200:
+                                    if sub_r.content[:4] == b'PK\x03\x04' or found_download_url.lower().endswith('.zip'):
+                                        with zipfile.ZipFile(io.BytesIO(sub_r.content)) as z:
+                                            csv_files = [n for n in z.namelist() if n.lower().endswith('.csv')]
+                                            if csv_files:
+                                                with z.open(csv_files[0]) as f:
+                                                    reader = csv.reader(io.TextIOWrapper(f, encoding='utf-8', errors='ignore'))
+                                                    parsed_headers = next(reader)
+                                                    for idx, row in enumerate(reader):
+                                                        if self.opendata_stop_requested or idx >= max_rows: break
+                                                        parsed_rows.append(row)
+                                    else:
+                                        reader = csv.reader(io.StringIO(sub_r.text))
+                                        parsed_headers = next(reader)
+                                        for idx, row in enumerate(reader):
+                                            if self.opendata_stop_requested or idx >= max_rows: break
+                                            parsed_rows.append(row)
+                            else:
+                                err_msg = "Webpage loaded, but no structured tables or downloadable CSV/ZIP links were detected."
+        except Exception as e:
+            err_msg = str(e)
+            
+        def _finish_ui():
+            self.opendata_is_fetching = False
+            self.btn_fetch_opendata.configure(state=tk.NORMAL)
+            self.btn_stop_opendata.configure(state=tk.DISABLED)
+            self.opendata_prog.stop()
+            
+            if err_msg:
+                self.opendata_status_var.set(f"❌ Error: {err_msg}")
+                messagebox.showerror("Fetch Error", f"Failed to fetch data from:\n{url}\n\nReason:\n{err_msg}")
+            else:
+                self.opendata_headers = [h.strip() for h in parsed_headers] if parsed_headers else []
+                self.opendata_raw_records = parsed_rows
+                self._refresh_opendata_table()
+                self.opendata_status_var.set(f"✅ Loaded {len(parsed_rows)} records ({len(self.opendata_headers)} columns) successfully!")
+                self.status_var.set(f"Loaded {len(parsed_rows)} registry records into memory.")
+                
+        self.after(0, _finish_ui)
+
+    def _refresh_opendata_table(self):
+        # Configure columns
+        if not self.opendata_headers and self.opendata_raw_records:
+            self.opendata_headers = [f"Col_{i+1}" for i in range(len(self.opendata_raw_records[0]))]
+            
+        self.opendata_tree.delete(*self.opendata_tree.get_children())
+        cols = [f"col_{i}" for i in range(len(self.opendata_headers))]
+        self.opendata_tree["columns"] = cols
+        
+        for i, header_text in enumerate(self.opendata_headers):
+            col_id = cols[i]
+            col_label = f"{header_text}"
+            if self.opendata_sort_col == i:
+                col_label += " ▼" if self.opendata_sort_rev else " ▲"
+            self.opendata_tree.heading(col_id, text=col_label, command=lambda idx=i: self._on_opendata_column_click(idx))
+            self.opendata_tree.column(col_id, width=150, minwidth=80, anchor=tk.W)
+            
+        filter_str = self.opendata_filter_var.get().strip().lower()
+        displayed_count = 0
+        
+        # Sort if set
+        records = list(self.opendata_raw_records)
+        if self.opendata_sort_col is not None and self.opendata_sort_col < len(self.opendata_headers):
+            records.sort(
+                key=lambda r: str(r[self.opendata_sort_col]).lower() if self.opendata_sort_col < len(r) else "",
+                reverse=self.opendata_sort_rev
+            )
+            
+        for r_idx, row in enumerate(records):
+            if filter_str:
+                row_str = " ".join([str(c) for c in row]).lower()
+                if filter_str not in row_str:
+                    continue
+            row_vals = [row[c_idx] if c_idx < len(row) else "" for c_idx in range(len(self.opendata_headers))]
+            self.opendata_tree.insert("", tk.END, iid=str(r_idx), values=row_vals)
+            displayed_count += 1
+            
+        self.opendata_count_badge.configure(text=f"📊 {displayed_count} of {len(self.opendata_raw_records)} records loaded")
+
+    def _on_opendata_column_click(self, col_idx):
+        if self.opendata_sort_col == col_idx:
+            self.opendata_sort_rev = not self.opendata_sort_rev
+        else:
+            self.opendata_sort_col = col_idx
+            self.opendata_sort_rev = False
+        self._refresh_opendata_table()
+
+    def _send_opendata_to_leads(self):
+        if not self.opendata_raw_records:
+            messagebox.showwarning("No Data", "No registry records loaded. Fetch a dataset first.")
+            return
+            
+        sel_iids = self.opendata_tree.selection()
+        if sel_iids:
+            records_to_send = [self.opendata_raw_records[int(i)] for i in sel_iids if int(i) < len(self.opendata_raw_records)]
+        else:
+            records_to_send = self.opendata_raw_records
+            
+        headers_lower = [h.lower() for h in self.opendata_headers]
+        
+        # Find best column mappings
+        org_col = None
+        name_col = None
+        role_col = None
+        permit_col = None
+        addr_col = None
+        email_col = None
+        
+        for idx, h in enumerate(headers_lower):
+            if any(k in h for k in ['business name', 'licence holder', 'organisation', 'organization', 'company', 'fire service', 'employer']):
+                if org_col is None: org_col = idx
+            elif any(k in h for k in ['name / official', 'full name', 'contact name', 'director', 'officer', 'applicant']):
+                if name_col is None: name_col = idx
+            elif any(k in h for k in ['role', 'job title', 'title', 'position']):
+                if role_col is None: role_col = idx
+            elif any(k in h for k in ['permit', 'registration number', 'licence no', 'reference']):
+                if permit_col is None: permit_col = idx
+            elif any(k in h for k in ['address', 'postcode', 'town', 'location']):
+                if addr_col is None: addr_col = idx
+            elif any(k in h for k in ['email', 'mail', 'e-mail']):
+                if email_col is None: email_col = idx
+
+        source_name = self.opendata_name_var.get().strip() or "Direct Public Register"
+        source_url = self.opendata_url_var.get().strip()
+        added_count = 0
+        
+        for r in records_to_send:
+            org_val = r[org_col] if (org_col is not None and org_col < len(r)) else ""
+            name_val = r[name_col] if (name_col is not None and name_col < len(r)) else ""
+            role_val = r[role_col] if (role_col is not None and role_col < len(r)) else ""
+            permit_val = r[permit_col] if (permit_col is not None and permit_col < len(r)) else ""
+            addr_val = r[addr_col] if (addr_col is not None and addr_col < len(r)) else ""
+            email_val = r[email_col] if (email_col is not None and email_col < len(r)) else ""
+            
+            # If name is present but org is not (e.g. single entity)
+            if not org_val and name_val:
+                org_val = name_val
+            if not name_val and org_val:
+                name_val = org_val
+                
+            parts = name_val.split()
+            first = parts[0] if parts else ""
+            last = parts[-1] if len(parts) > 1 else ""
+            
+            lead = {
+                "Name": name_val,
+                "First Name": first,
+                "Surname": last,
+                "Job Title": role_val or ("Chief Fire Officer" if "fire" in source_name.lower() else ("Permit Holder" if permit_val else "Registered Commercial Entity")),
+                "Organisation": org_val,
+                "URL": source_url or "https://environment.data.gov.uk",
+                "Snippet": f"Source: {source_name} | Permit: {permit_val} | Address: {addr_val}" if permit_val or addr_val else f"Direct Export: {source_name}",
+                "Phone": "",
+                "Enriched Email": email_val if email_val else "Click '⚡ Batch Enrich'",
+                "Deliverability Status": "🟢 Valid (Imported)" if email_val else "⚪ Not Checked",
+                "Domain": "",
+                "MX Host": ""
+            }
+            
+            self.results_data.append(lead)
+            added_count += 1
+            
+        self._refresh_text_display()
+        self.notebook.select(self.tab_results)
+        self.status_var.set(f"Sent {added_count} registry records to Leads Table (Tab 2). Click '⚡ Batch Enrich All' to discover emails.")
+        messagebox.showinfo("Records Sent", f"✅ Successfully sent {added_count} records to Tab 2 (Leads Table)!\n\nYou can now click '⚡ Batch Enrich All' to automatically synthesize company domains, generate work emails, and verify mail servers.")
+
+    def _send_opendata_to_verifier(self):
+        if not self.opendata_raw_records:
+            messagebox.showwarning("No Data", "No registry records loaded.")
+            return
+            
+        # Check if email column exists
+        headers_lower = [h.lower() for h in self.opendata_headers]
+        email_col = None
+        name_col = None
+        org_col = None
+        
+        for idx, h in enumerate(headers_lower):
+            if any(k in h for k in ['email', 'mail', 'e-mail']):
+                email_col = idx
+            elif any(k in h for k in ['name', 'director', 'officer']):
+                name_col = idx
+            elif any(k in h for k in ['organisation', 'organization', 'company', 'business']):
+                org_col = idx
+
+        added_count = 0
+        for r in self.opendata_raw_records:
+            email_val = r[email_col] if (email_col is not None and email_col < len(r)) else ""
+            name_val = r[name_col] if (name_col is not None and name_col < len(r)) else ""
+            org_val = r[org_col] if (org_col is not None and org_col < len(r)) else ""
+            
+            if email_val:
+                parts = name_val.split()
+                first = parts[0] if parts else ""
+                last = parts[-1] if len(parts) > 1 else ""
+                
+                v_item = {
+                    "Email": email_val,
+                    "First Name": first,
+                    "Surname": last,
+                    "Full Name": name_val,
+                    "Organisation": org_val,
+                    "Job Title": "Registered Entity",
+                    "Status": "⚪ Not Checked",
+                    "Badge": "⚪ Not Checked",
+                    "MX Host": "",
+                    "Response Time": "-",
+                    "SMTP Log": "Imported from Direct Registry"
+                }
+                self.verifier_data.append(v_item)
+                added_count += 1
+                
+        if added_count > 0:
+            self._refresh_verifier_display()
+            self.notebook.select(self.tab_verifier)
+            messagebox.showinfo("Sent to Verifier", f"✅ Sent {added_count} email addresses to Tab 3 (Verifier)!\n\nClick '🚀 Start MX/SMTP Verification' to test mail servers.")
+        else:
+            messagebox.showinfo("No Direct Emails", "No email column was detected in this registry.\n\nTip: Click '⚡ Send Records to Leads Table (Tab 2)' first, where the app will automatically resolve company domains and synthesize verified corporate emails!")
+
+    def _export_opendata_csv(self):
+        if not self.opendata_raw_records:
+            messagebox.showwarning("No Data", "No records loaded to export.")
+            return
+            
+        path = filedialog.asksaveasfilename(
+            title="Export Registry Dataset as CSV",
+            defaultextension=".csv",
+            filetypes=[("CSV Spreadsheet", "*.csv"), ("All Files", "*.*")]
+        )
+        if not path:
+            return
+            
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                if self.opendata_headers:
+                    writer.writerow(self.opendata_headers)
+                for r in self.opendata_raw_records:
+                    writer.writerow(r)
+            messagebox.showinfo("Export Successful", f"✅ Successfully exported {len(self.opendata_raw_records)} records to:\n{path}")
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to save CSV file:\n{e}")
+
+    def _clear_opendata_table(self):
+        self.opendata_raw_records = []
+        self.opendata_headers = []
+        self.opendata_tree.delete(*self.opendata_tree.get_children())
+        self.opendata_count_badge.configure(text="0 records loaded")
+        self.opendata_status_var.set("Table cleared. Ready for next dataset.")
+
+    # -------------------------------------------------------------
+    # HELP & USER GUIDE DIALOGS
+    # -------------------------------------------------------------
+    def _open_user_guide_dialog(self):
+        """Opens the full interactive In-App User Guide reader dialog with search, TOC, and syntax styling."""
+        guide_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "USER_GUIDE.md")
+        if not os.path.exists(guide_path):
+            messagebox.showwarning("User Guide Not Found", f"Could not find USER_GUIDE.md at:\n{guide_path}\n\nPlease ensure USER_GUIDE.md exists in the application directory.")
+            return
+
+        try:
+            with open(guide_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception as e:
+            messagebox.showerror("Error Reading Guide", f"Could not open USER_GUIDE.md:\n{e}")
+            return
+
+        dialog = tk.Toplevel(self)
+        dialog.title("📖 Complete User Guide & Knowledge Base - Multi-Engine Lead & Advanced Dork Suite")
+        dialog.geometry("1100x750")
+        dialog.minsize(850, 520)
+
+        # Center dialog relative to parent
+        try:
+            x = self.winfo_x() + (self.winfo_width() // 2) - 550
+            y = self.winfo_y() + (self.winfo_height() // 2) - 375
+            dialog.geometry(f"1100x750+{max(30, x)}+{max(30, y)}")
+        except Exception:
+            pass
+
+        # Top Header & Search Bar Frame
+        top_bar = ttk.Frame(dialog, padding=(12, 10, 12, 8))
+        top_bar.pack(fill=tk.X)
+
+        header_info = ttk.Frame(top_bar)
+        header_info.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        guide_title = ttk.Label(header_info, text="📖 In-App User Guide & Beginner's Knowledge Base", font=("Segoe UI", 13, "bold"), foreground="#4F46E5")
+        guide_title.pack(anchor=tk.W)
+        guide_sub = ttk.Label(header_info, text="Browse the table of contents or search topics, dork patterns, deliverability badges, and workflows.", font=("Segoe UI", 8), foreground="#6B7280")
+        guide_sub.pack(anchor=tk.W)
+
+        # Search Controls
+        search_frame = ttk.Frame(top_bar)
+        search_frame.pack(side=tk.RIGHT)
+
+        ttk.Label(search_frame, text="🔍 Search:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 4))
+        search_var = tk.StringVar()
+        search_entry = ttk.Entry(search_frame, textvariable=search_var, width=22)
+        search_entry.pack(side=tk.LEFT, padx=(0, 4))
+
+        match_count_lbl = ttk.Label(search_frame, text="0 matches", font=("Segoe UI", 8), foreground="#6B7280", width=12)
+        match_count_lbl.pack(side=tk.LEFT, padx=(0, 4))
+
+        # Main Paned Window: Left TOC sidebar, Right scrollable Text
+        paned = ttk.PanedWindow(dialog, orient=tk.HORIZONTAL)
+        paned.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
+
+        # Left TOC Sidebar
+        toc_frame = ttk.Frame(paned, width=280)
+        paned.add(toc_frame, weight=1)
+
+        toc_header_frame = ttk.Frame(toc_frame)
+        toc_header_frame.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(toc_header_frame, text="📑 Table of Contents", font=("Segoe UI", 10, "bold"), foreground="#1F2937").pack(side=tk.LEFT)
+
+        toc_list_frame = ttk.Frame(toc_frame)
+        toc_list_frame.pack(fill=tk.BOTH, expand=True)
+
+        toc_scroll_y = ttk.Scrollbar(toc_list_frame, orient=tk.VERTICAL)
+        toc_scroll_x = ttk.Scrollbar(toc_list_frame, orient=tk.HORIZONTAL)
+        toc_listbox = tk.Listbox(toc_list_frame, yscrollcommand=toc_scroll_y.set, xscrollcommand=toc_scroll_x.set,
+                                 font=("Segoe UI", 9), selectbackground="#4F46E5", selectforeground="#FFFFFF",
+                                 activestyle="none", relief=tk.SOLID, borderwidth=1, highlightthickness=0)
+        toc_scroll_y.config(command=toc_listbox.yview)
+        toc_scroll_x.config(command=toc_listbox.xview)
+
+        toc_scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
+        toc_scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
+        toc_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Right Text Viewer Frame
+        text_frame = ttk.Frame(paned)
+        paned.add(text_frame, weight=4)
+
+        text_scroll = ttk.Scrollbar(text_frame, orient=tk.VERTICAL)
+        guide_text = tk.Text(text_frame, wrap=tk.WORD, yscrollcommand=text_scroll.set,
+                             font=("Segoe UI", 10), bg="#FFFFFF", fg="#1F2937",
+                             padx=18, pady=14, relief=tk.SOLID, borderwidth=1, highlightthickness=0)
+        text_scroll.config(command=guide_text.yview)
+        text_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        guide_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Configure rich styles in tk.Text
+        guide_text.tag_configure("h1", font=("Segoe UI", 15, "bold"), foreground="#1E1B4B", spacing1=14, spacing3=6)
+        guide_text.tag_configure("h2", font=("Segoe UI", 12, "bold"), foreground="#4338CA", spacing1=12, spacing3=4)
+        guide_text.tag_configure("h3", font=("Segoe UI", 10, "bold"), foreground="#4F46E5", spacing1=8, spacing3=2)
+        guide_text.tag_configure("h4", font=("Segoe UI", 9, "bold"), foreground="#374151", spacing1=6, spacing3=2)
+        guide_text.tag_configure("bullet", lmargin1=16, lmargin2=28)
+        guide_text.tag_configure("code_block", font=("Consolas", 9), background="#F8FAFC", foreground="#0F172A", lmargin1=20, lmargin2=20, rmargin=20, spacing1=4, spacing3=4)
+        guide_text.tag_configure("quote", font=("Segoe UI", 9, "italic"), foreground="#4B5563", lmargin1=24, lmargin2=24, spacing1=3, spacing3=3)
+        guide_text.tag_configure("separator", foreground="#CBD5E1")
+        guide_text.tag_configure("search_match", background="#FEF08A", foreground="#000000")
+        guide_text.tag_configure("active_match", background="#F59E0B", foreground="#FFFFFF")
+        guide_text.tag_configure("section_highlight", background="#E0E7FF")
+
+        # Parse markdown lines into formatted Text & TOC items
+        toc_items = [] # list of (line_idx_in_text, display_text)
+        lines = content.splitlines()
+        in_code_block = False
+
+        guide_text.config(state=tk.NORMAL)
+        for line in lines:
+            if line.startswith("```"):
+                in_code_block = not in_code_block
+                guide_text.insert(tk.END, line + "\n", "code_block")
+                continue
+
+            if in_code_block:
+                guide_text.insert(tk.END, line + "\n", "code_block")
+                continue
+
+            if line.startswith("# "):
+                curr_pos = guide_text.index(tk.INSERT)
+                clean_title = line[2:].strip()
+                guide_text.insert(tk.END, clean_title + "\n", "h1")
+                toc_items.append((curr_pos, f"📘 {clean_title}"))
+            elif line.startswith("## "):
+                curr_pos = guide_text.index(tk.INSERT)
+                clean_title = line[3:].strip()
+                guide_text.insert(tk.END, clean_title + "\n", "h2")
+                toc_items.append((curr_pos, f"  📁 {clean_title}"))
+            elif line.startswith("### "):
+                curr_pos = guide_text.index(tk.INSERT)
+                clean_title = line[4:].strip()
+                guide_text.insert(tk.END, clean_title + "\n", "h3")
+                toc_items.append((curr_pos, f"    🔹 {clean_title}"))
+            elif line.startswith("#### "):
+                curr_pos = guide_text.index(tk.INSERT)
+                clean_title = line[5:].strip()
+                guide_text.insert(tk.END, clean_title + "\n", "h4")
+            elif line.startswith("---"):
+                guide_text.insert(tk.END, "─" * 65 + "\n", "separator")
+            elif line.startswith("> "):
+                guide_text.insert(tk.END, line[2:] + "\n", "quote")
+            elif line.startswith("- ") or line.startswith("* "):
+                guide_text.insert(tk.END, "  • " + line[2:] + "\n", "bullet")
+            else:
+                guide_text.insert(tk.END, line + "\n")
+
+        guide_text.config(state=tk.DISABLED)
+
+        # Populate TOC listbox
+        for _, title in toc_items:
+            toc_listbox.insert(tk.END, title)
+
+        def _on_toc_select(event=None):
+            sel = toc_listbox.curselection()
+            if not sel:
+                return
+            idx = sel[0]
+            if idx < len(toc_items):
+                target_pos, _ = toc_items[idx]
+                guide_text.see(target_pos)
+                guide_text.tag_remove("section_highlight", "1.0", tk.END)
+                # Highlight the target header line briefly
+                line_no = target_pos.split(".")[0]
+                guide_text.tag_add("section_highlight", f"{line_no}.0", f"{line_no}.end")
+
+        toc_listbox.bind("<<ListboxSelect>>", _on_toc_select)
+
+        # Search Highlighting & Navigation Logic
+        search_matches = [] # list of start positions
+        current_match_idx = [-1]
+
+        def _perform_search(event=None):
+            query = search_var.get().strip()
+            guide_text.tag_remove("search_match", "1.0", tk.END)
+            guide_text.tag_remove("active_match", "1.0", tk.END)
+            search_matches.clear()
+            current_match_idx[0] = -1
+
+            if not query:
+                match_count_lbl.config(text="0 matches")
+                return
+
+            pos = "1.0"
+            while True:
+                pos = guide_text.search(query, pos, stopindex=tk.END, nocase=True)
+                if not pos:
+                    break
+                end_pos = f"{pos}+{len(query)}c"
+                guide_text.tag_add("search_match", pos, end_pos)
+                search_matches.append(pos)
+                pos = end_pos
+
+            total = len(search_matches)
+            if total > 0:
+                current_match_idx[0] = 0
+                _highlight_active_match()
+                match_count_lbl.config(text=f"1 of {total} matches", foreground="#15803D")
+            else:
+                match_count_lbl.config(text="0 matches", foreground="#DC2626")
+
+        def _highlight_active_match():
+            if not search_matches or current_match_idx[0] < 0:
+                return
+            guide_text.tag_remove("active_match", "1.0", tk.END)
+            curr_pos = search_matches[current_match_idx[0]]
+            query_len = len(search_var.get().strip())
+            end_pos = f"{curr_pos}+{query_len}c"
+            guide_text.tag_add("active_match", curr_pos, end_pos)
+            guide_text.see(curr_pos)
+            total = len(search_matches)
+            match_count_lbl.config(text=f"{current_match_idx[0] + 1} of {total} matches", foreground="#15803D")
+
+        def _next_match(event=None):
+            if not search_matches:
+                return
+            current_match_idx[0] = (current_match_idx[0] + 1) % len(search_matches)
+            _highlight_active_match()
+
+        def _prev_match(event=None):
+            if not search_matches:
+                return
+            current_match_idx[0] = (current_match_idx[0] - 1 + len(search_matches)) % len(search_matches)
+            _highlight_active_match()
+
+        def _clear_search(event=None):
+            search_var.set("")
+            guide_text.tag_remove("search_match", "1.0", tk.END)
+            guide_text.tag_remove("active_match", "1.0", tk.END)
+            search_matches.clear()
+            current_match_idx[0] = -1
+            match_count_lbl.config(text="0 matches", foreground="#6B7280")
+
+        btn_prev = ttk.Button(search_frame, text="▲", width=3, command=_prev_match)
+        btn_prev.pack(side=tk.LEFT, padx=1)
+        btn_next = ttk.Button(search_frame, text="▼", width=3, command=_next_match)
+        btn_next.pack(side=tk.LEFT, padx=1)
+        btn_clear = ttk.Button(search_frame, text="✕", width=3, command=_clear_search)
+        btn_clear.pack(side=tk.LEFT, padx=(1, 0))
+
+        search_entry.bind("<Return>", lambda e: _next_match() if search_matches else _perform_search())
+        search_entry.bind("<Shift-Return>", _prev_match)
+        search_var.trace_add("write", lambda *args: _perform_search())
+
+        # Bottom Action Bar
+        bottom_bar = ttk.Frame(dialog, padding=(12, 6, 12, 10))
+        bottom_bar.pack(fill=tk.X)
+
+        status_lbl = ttk.Label(bottom_bar, text=f"📁 Source: {os.path.basename(guide_path)} ({len(lines)} lines)", font=("Segoe UI", 8), foreground="#6B7280")
+        status_lbl.pack(side=tk.LEFT)
+
+        def _copy_all_guide():
+            try:
+                self.clipboard_clear()
+                self.clipboard_append(content)
+                messagebox.showinfo("Copied", "📋 The complete User Guide text has been copied to your clipboard!", parent=dialog)
+            except Exception as e:
+                messagebox.showerror("Clipboard Error", f"Could not copy text:\n{e}", parent=dialog)
+
+        btn_copy = ttk.Button(bottom_bar, text="📋 Copy Full Guide", style="Secondary.TButton", command=_copy_all_guide)
+        btn_copy.pack(side=tk.RIGHT, padx=(4, 0))
+
+        btn_ext = ttk.Button(bottom_bar, text="🌐 Open in Default App / Browser", style="Secondary.TButton", command=self._open_user_guide_external)
+        btn_ext.pack(side=tk.RIGHT, padx=4)
+
+        btn_close = ttk.Button(bottom_bar, text="✕ Close", style="Primary.TButton", command=dialog.destroy)
+        btn_close.pack(side=tk.RIGHT, padx=4)
+
+    def _open_user_guide_external(self):
+        """Opens USER_GUIDE.md directly using the system's default markdown reader or browser."""
+        guide_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "USER_GUIDE.md")
+        if not os.path.exists(guide_path):
+            messagebox.showwarning("File Not Found", f"Could not locate USER_GUIDE.md at:\n{guide_path}")
+            return
+        try:
+            if hasattr(os, "startfile"):
+                os.startfile(guide_path)
+            else:
+                webbrowser.open(f"file:///{urllib.parse.quote(guide_path.replace(os.sep, '/'))}")
+        except Exception as e:
+            messagebox.showerror("Open Error", f"Could not launch file:\n{e}")
+
+    def _open_readme_external(self):
+        """Opens README.md directly using the system's default viewer."""
+        readme_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md")
+        if not os.path.exists(readme_path):
+            messagebox.showwarning("File Not Found", f"Could not locate README.md at:\n{readme_path}")
+            return
+        try:
+            if hasattr(os, "startfile"):
+                os.startfile(readme_path)
+            else:
+                webbrowser.open(f"file:///{urllib.parse.quote(readme_path.replace(os.sep, '/'))}")
+        except Exception as e:
+            messagebox.showerror("Open Error", f"Could not launch file:\n{e}")
+
+    def _show_quick_start_dialog(self):
+        """Displays a clean modal with the 4-step dummy-proof quick start walkthrough."""
+        dialog = tk.Toplevel(self)
+        dialog.title("⚡ Quick Start: 4-Step Walkthrough")
+        dialog.geometry("750x520")
+        dialog.resizable(False, False)
+
+        try:
+            x = self.winfo_x() + (self.winfo_width() // 2) - 375
+            y = self.winfo_y() + (self.winfo_height() // 2) - 260
+            dialog.geometry(f"750x520+{max(30, x)}+{max(30, y)}")
+        except Exception:
+            pass
+
+        frame = ttk.Frame(dialog, padding="16")
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="⚡ Quick Start Walkthrough (In 4 Easy Steps)", font=("Segoe UI", 13, "bold"), foreground="#4F46E5").pack(anchor=tk.W, pady=(0, 4))
+        ttk.Label(frame, text="Follow these four steps to start extracting and enriching verified leads immediately:", font=("Segoe UI", 9), foreground="#6B7280").pack(anchor=tk.W, pady=(0, 10))
+
+        steps = [
+            ("Step 1: Pick a Preset or Build Your Query", "In Tab 1 (Query Builder), select a quick preset from the 'Templates' menu or dropdown (e.g. 'Materials Recovery Facilities' or 'Fire & Rescue IT Leaders'). Alternatively, enter your search keywords.", "#4F46E5"),
+            ("Step 2: Run Search & Extract Contacts", "Choose your search engine (Google, Bing, Brave, DDG) and click '🔍 Run Search & Scrape'. The app pulls names, job titles, companies, and URLs directly into Tab 2.", "#2563EB"),
+            ("Step 3: Batch Enrich Missing Emails", "Switch to Tab 2 (Results & Enrichment) and click '⚡ Batch Enrich All Contacts'. The app automatically matches corporate domains, constructs standard email patterns, and verifies mailbox deliverability.", "#7C3AED"),
+            ("Step 4: Verify & Export Clean Spreadsheets", "Inspect the deliverability badges (🟢 High, 🟡 Catch-All, 🔴 Undeliverable). Click '💾 Save / Export Enriched CSV' to download your final clean spreadsheet for your CRM or outreach campaign!", "#059669")
+        ]
+
+        for title, desc, color in steps:
+            s_frame = ttk.LabelFrame(frame, text=f" {title} ", padding=(10, 6))
+            s_frame.pack(fill=tk.X, pady=4)
+            lbl = ttk.Label(s_frame, text=desc, font=("Segoe UI", 9), wraplength=680, justify=tk.LEFT)
+            lbl.pack(anchor=tk.W)
+
+        btn_row = ttk.Frame(frame)
+        btn_row.pack(fill=tk.X, pady=(12, 0))
+
+        btn_full = ttk.Button(btn_row, text="📖 Open Full User Guide", style="Secondary.TButton", command=lambda: [dialog.destroy(), self._open_user_guide_dialog()])
+        btn_full.pack(side=tk.LEFT)
+
+        btn_ok = ttk.Button(btn_row, text="Got It, Let's Start!", style="Primary.TButton", command=dialog.destroy)
+        btn_ok.pack(side=tk.RIGHT)
+
+    def _show_deliverability_guide(self):
+        """Displays a modal explaining email verification badges and SMTP handshake safety."""
+        dialog = tk.Toplevel(self)
+        dialog.title("🛡️ Email Deliverability Badges & Verification Guide")
+        dialog.geometry("780x560")
+        dialog.resizable(False, False)
+
+        try:
+            x = self.winfo_x() + (self.winfo_width() // 2) - 390
+            y = self.winfo_y() + (self.winfo_height() // 2) - 280
+            dialog.geometry(f"780x560+{max(30, x)}+{max(30, y)}")
+        except Exception:
+            pass
+
+        frame = ttk.Frame(dialog, padding="16")
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="🛡️ Understanding Email Deliverability Badges", font=("Segoe UI", 13, "bold"), foreground="#15803D").pack(anchor=tk.W, pady=(0, 4))
+        ttk.Label(frame, text="When email addresses are verified in Tab 2 or Tab 3, they receive one of four badges:", font=("Segoe UI", 9), foreground="#6B7280").pack(anchor=tk.W, pady=(0, 10))
+
+        badges = [
+            ("🟢 High Deliverability (SMTP Validated)", "#DCFCE7", "#15803D", "The recipient mail server (MX) explicitly accepted the recipient address (SMTP 250 OK) without sending any actual email. Safe to send."),
+            ("🟡 Catch-All Domain (MX Verified)", "#FEF3C7", "#B45309", "The domain has active mail servers, but accepts all addresses without verifying individual mailboxes. Safe to send with mild bounce caution."),
+            ("🔵 Syntax / Format Valid", "#DBEAFE", "#1E40AF", "The email has a valid structural format (name@domain.com) and valid TLD, but mail server verification was skipped or timed out."),
+            ("🔴 Undeliverable / Mailbox Rejected", "#FEE2E2", "#B91C1C", "The domain does not exist, has no MX records, or the server explicitly returned SMTP 550 Mailbox Unavailable. Do not send.")
+        ]
+
+        for title, bg, fg, desc in badges:
+            b_box = tk.Frame(frame, bg=bg, highlightbackground=fg, highlightthickness=1, padx=10, pady=8)
+            b_box.pack(fill=tk.X, pady=4)
+            t_lbl = tk.Label(b_box, text=title, font=("Segoe UI", 10, "bold"), bg=bg, fg=fg)
+            t_lbl.pack(anchor=tk.W)
+            d_lbl = tk.Label(b_box, text=desc, font=("Segoe UI", 9), bg=bg, fg="#1F2937", wraplength=720, justify=tk.LEFT)
+            d_lbl.pack(anchor=tk.W, pady=(2, 0))
+
+        # Handshake note
+        note_frame = ttk.LabelFrame(frame, text=" 💡 Zero Spam Guarantee ", padding=(10, 6))
+        note_frame.pack(fill=tk.X, pady=(10, 0))
+        ttk.Label(note_frame, text="Our live verification uses a non-intrusive SMTP RCPT TO handshake. It disconnects before any message data is sent (RSET / QUIT), meaning zero spam is delivered and zero recipient inboxes are pinged.", font=("Segoe UI", 8), wraplength=720).pack(anchor=tk.W)
+
+        btn_close = ttk.Button(frame, text="Close Guide", style="Primary.TButton", command=dialog.destroy)
+        btn_close.pack(anchor=tk.E, pady=(12, 0))
+
+    def _show_opendata_guide(self):
+        """Displays a modal explaining how to use Tab 4 for direct open government registers."""
+        dialog = tk.Toplevel(self)
+        dialog.title("📥 Direct Open Data & Public Registers Guide")
+        dialog.geometry("780x520")
+        dialog.resizable(False, False)
+
+        try:
+            x = self.winfo_x() + (self.winfo_width() // 2) - 390
+            y = self.winfo_y() + (self.winfo_height() // 2) - 260
+            dialog.geometry(f"780x520+{max(30, x)}+{max(30, y)}")
+        except Exception:
+            pass
+
+        frame = ttk.Frame(dialog, padding="16")
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="📥 Direct Open Data & Public Registers (Tab 4)", font=("Segoe UI", 13, "bold"), foreground="#2563EB").pack(anchor=tk.W, pady=(0, 4))
+        ttk.Label(frame, text="How to bypass search engine rate limits and pull complete official datasets directly:", font=("Segoe UI", 9), foreground="#6B7280").pack(anchor=tk.W, pady=(0, 10))
+
+        points = [
+            ("1. Why Use Open Data Registers?", "Instead of querying Google pages (which can trigger CAPTCHAs), official regulators (Environment Agency, SEPA, NRW) publish complete CSV/ZIP datasets containing company names, permit numbers, and postcodes."),
+            ("2. Pre-Configured Sources", "Tab 4 comes loaded with official public registries for England (EA Permitted Waste Operations, Waste Carriers & Brokers), Scotland (SEPA Register), Wales (NRW Register), and UK central data.gov.uk."),
+            ("3. Download & Auto-Extract", "Click '⬇️ Download / Open Selected Source'. If a direct CSV or ZIP URL is supplied, the suite downloads, unzips in-memory, and loads all records into the live searchable table instantly."),
+            ("4. Add Custom Registry URLs", "Paste any open government dataset or public CSV URL into the 'Custom Registry URL' box and click '💾 Save & Add to Register Sources' to store it forever in your dropdown list.")
+        ]
+
+        for title, desc in points:
+            p_frame = ttk.LabelFrame(frame, text=f" {title} ", padding=(10, 6))
+            p_frame.pack(fill=tk.X, pady=4)
+            ttk.Label(p_frame, text=desc, font=("Segoe UI", 9), wraplength=720, justify=tk.LEFT).pack(anchor=tk.W)
+
+        btn_close = ttk.Button(frame, text="Close Guide", style="Primary.TButton", command=dialog.destroy)
+        btn_close.pack(anchor=tk.E, pady=(12, 0))
+
+    def _show_about_dialog(self):
+        """Displays the application About modal dialog."""
+        dialog = tk.Toplevel(self)
+        dialog.title("ℹ️ About Multi-Engine Lead & Advanced Dork Suite")
+        dialog.geometry("560x380")
+        dialog.resizable(False, False)
+
+        try:
+            x = self.winfo_x() + (self.winfo_width() // 2) - 280
+            y = self.winfo_y() + (self.winfo_height() // 2) - 190
+            dialog.geometry(f"560x380+{max(30, x)}+{max(30, y)}")
+        except Exception:
+            pass
+
+        frame = ttk.Frame(dialog, padding="20")
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="⚡ Multi-Engine Lead & Advanced Dork Suite", font=("Segoe UI", 13, "bold"), foreground="#4F46E5").pack(anchor=tk.W, pady=(0, 2))
+        ttk.Label(frame, text="Version 3.2.0 • Professional Edition", font=("Segoe UI", 9), foreground="#6B7280").pack(anchor=tk.W, pady=(0, 10))
+
+        about_text = (
+            "An all-in-one multi-engine lead generation, contact extraction, corporate email "
+            "enrichment, live SMTP mailbox verification, and direct open government dataset suite.\n\n"
+            "• Search Engines: Google, Bing, DuckDuckGo, Brave, Yahoo, Tor/Onion\n"
+            "• Enrichment: 100+ UK public sector domain registries, Hunter.io, Abstract API\n"
+            "• Deliverability: RFC 5322 syntax validation, DNS MX resolution, zero-spam SMTP handshake\n"
+            "• Open Data: Direct integration with EA, SEPA, NRW, and data.gov.uk bulk datasets\n\n"
+            "Designed for sales teams, researchers, journalists, and recruitment specialists."
+        )
+        ttk.Label(frame, text=about_text, font=("Segoe UI", 9), wraplength=510, justify=tk.LEFT).pack(anchor=tk.W, pady=(0, 14))
+
+        btn_row = ttk.Frame(frame)
+        btn_row.pack(fill=tk.X)
+        ttk.Button(btn_row, text="📖 Open Full User Guide", style="Secondary.TButton", command=lambda: [dialog.destroy(), self._open_user_guide_dialog()]).pack(side=tk.LEFT)
+        ttk.Button(btn_row, text="Close", style="Primary.TButton", command=dialog.destroy).pack(side=tk.RIGHT)
+
+    # -------------------------------------------------------------
     # QUERY BUILDER ENGINE
     # -------------------------------------------------------------
     def _append_operator_to_query(self, operator_snippet):
         current = self.assembled_query_var.get().strip()
         new_q = f"{current}{operator_snippet}" if current else operator_snippet.strip()
         self.assembled_query_var.set(new_q)
+
+    def _on_criteria_tab_changed(self, event=None):
+        """Switches active criteria mode and updates assembled query when switching subtabs."""
+        try:
+            sel = self.criteria_notebook.select()
+            sel_idx = self.criteria_notebook.index(sel)
+            if sel_idx == 0:
+                self.active_criteria_mode = "targeted"
+            else:
+                self.active_criteria_mode = "generalized"
+            self._rebuild_query()
+        except Exception:
+            pass
+
+    def _on_gen_category_selected(self, event=None):
+        val = self.gen_category_combo.get()
+        if "Materials Recovery & Waste" in val:
+            self.gen_industry_var.set('("Materials Recovery Facility" OR "waste transfer station" OR "commercial recycling facility")')
+        elif "Logistics & Distribution" in val:
+            self.gen_industry_var.set('("distribution centre" OR "fulfilment centre" OR "logistics hub" OR "warehouse depot")')
+        elif "Transport & Fleet" in val:
+            self.gen_industry_var.set('("fleet depot" OR "transport depot" OR "haulage depot" OR "operating centre")')
+        elif "Industrial Manufacturing" in val:
+            self.gen_industry_var.set('("manufacturing plant" OR "processing facility" OR "production site" OR "industrial estate")')
+        elif "Energy, Biomass" in val:
+            self.gen_industry_var.set('("energy from waste" OR "biomass plant" OR "anaerobic digestion" OR "EfW facility")')
+        elif "Data Centers" in val:
+            self.gen_industry_var.set('("data centre" OR "server farm" OR "colocation facility" OR "telecoms exchange")')
+        elif "Chemical & Hazardous" in val:
+            self.gen_industry_var.set('("chemical storage" OR "COMAH site" OR "bulk fuel terminal" OR "hazmat facility")')
+        elif "Metal Recycling" in val:
+            self.gen_industry_var.set('("scrap metal yard" OR "metal recycling" OR "plastics reprocessing" OR "circular economy facility")')
+        elif "Clear" in val:
+            self.gen_industry_var.set("")
+        self._rebuild_query()
+
+    def _on_gen_scale_selected(self, event=None):
+        val = self.gen_scale_combo.get()
+        if "Multi-Site" in val:
+            self.gen_scale_var.set('("multiple sites" OR "depots across" OR "nationwide" OR "head office")')
+        elif "Regional Hubs" in val:
+            self.gen_scale_var.set('("regional depots" OR "branches across" OR "operating centres" OR "facilities across")')
+        elif "Corporate HQ" in val:
+            self.gen_scale_var.set('("head office" OR "corporate headquarters" OR "group operations" OR "registered office")')
+        elif "UK-Wide" in val:
+            self.gen_scale_var.set('("national coverage" OR "uk-wide" OR "across the uk" OR "network of facilities")')
+        elif "None" in val:
+            self.gen_scale_var.set("")
+        self._rebuild_query()
+
+    def _on_gen_geo_selected(self, event=None):
+        val = self.gen_geo_combo.get()
+        if "United Kingdom" in val:
+            self.gen_geo_var.set('("United Kingdom" OR "UK" OR "England" OR "Scotland" OR "Wales")')
+        elif "England & Greater" in val:
+            self.gen_geo_var.set('("England" OR "London" OR "South East" OR "Midlands" OR "North West")')
+        elif "Scotland & Northern" in val:
+            self.gen_geo_var.set('("Scotland" OR "Northern Ireland" OR "Edinburgh" OR "Glasgow" OR "Belfast")')
+        elif "United States" in val:
+            self.gen_geo_var.set('("United States" OR "USA" OR "nationwide" OR "headquarters")')
+        elif "Europe" in val:
+            self.gen_geo_var.set('("Europe" OR "EU" OR "Germany" OR "France" OR "Netherlands")')
+        elif "Worldwide" in val:
+            self.gen_geo_var.set("")
+        self._rebuild_query()
+
+    def _on_gen_exclude_selected(self, event=None):
+        val = self.gen_exclude_combo.get()
+        if "Municipal/Council Tips & .gov.uk" in val:
+            self.gen_exclude_var.set("-council -civic -household -tip -hwrc -.gov.uk")
+        elif "Council Tips + Job" in val:
+            self.gen_exclude_var.set("-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers")
+        elif "Job & Recruitment" in val:
+            self.gen_exclude_var.set("-jobs -recruiting -indeed -careers -vacancies -totaljobs -reed")
+        elif "Public Sector" in val:
+            self.gen_exclude_var.set("-gov -council -nhs -police -.gov.uk -.nhs.uk")
+        elif "Directory" in val:
+            self.gen_exclude_var.set("-yell -thomsonlocal -checkatrade -192.com -trustpilot")
+        elif "No Exclusions" in val:
+            self.gen_exclude_var.set("")
+        self._rebuild_query()
+
+    def _load_waste_facility_example(self):
+        """Loads the generalized waste & materials recovery facility search query."""
+        self.criteria_notebook.select(self.subtab_generalized)
+        self.active_criteria_mode = "generalized"
+        self._updating_query = True
+        self.gen_industry_var.set('("Materials Recovery Facility" OR "waste transfer station" OR "commercial recycling facility")')
+        self.gen_scale_var.set('("multiple sites" OR "depots across" OR "nationwide" OR "head office")')
+        self.gen_geo_var.set('("United Kingdom" OR "UK" OR "England" OR "Scotland" OR "Wales")')
+        self.gen_exclude_var.set('-council -civic -household -tip -hwrc -.gov.uk')
+        self.gen_intext_var.set("")
+        self.gen_inurl_var.set("")
+        self.gen_site_var.set("")
+        self.gen_filetype_var.set("None")
+        self.gen_email_dork_var.set(False)
+        self.gen_phone_dork_var.set(False)
+        if hasattr(self, "gen_category_combo"):
+            self.gen_category_combo.current(1)
+        if hasattr(self, "gen_scale_combo"):
+            self.gen_scale_combo.current(1)
+        if hasattr(self, "gen_geo_combo"):
+            self.gen_geo_combo.current(1)
+        if hasattr(self, "gen_exclude_combo"):
+            self.gen_exclude_combo.current(1)
+        self._updating_query = False
+        self._rebuild_query()
+        self.status_var.set("Loaded Generalized Search: Waste & Materials Recovery Facilities (UK)")
+
+    def _reset_generalized_form(self):
+        """Resets all fields in the Generalized Search Criteria tab."""
+        self._updating_query = True
+        self.gen_industry_var.set("")
+        self.gen_scale_var.set("")
+        self.gen_geo_var.set("")
+        self.gen_exclude_var.set("")
+        self.gen_intext_var.set("")
+        self.gen_inurl_var.set("")
+        self.gen_site_var.set("")
+        self.gen_filetype_var.set("None")
+        self.gen_email_dork_var.set(False)
+        self.gen_phone_dork_var.set(False)
+        if hasattr(self, "gen_category_combo"):
+            self.gen_category_combo.set("Choose Preset Category...")
+        if hasattr(self, "gen_scale_combo"):
+            self.gen_scale_combo.set("Choose Scale...")
+        if hasattr(self, "gen_geo_combo"):
+            self.gen_geo_combo.set("Choose Region...")
+        if hasattr(self, "gen_exclude_combo"):
+            self.gen_exclude_combo.set("Choose Exclusion Pattern...")
+        self.assembled_query_var.set("")
+        self._updating_query = False
+        self.status_var.set("Generalized search criteria cleared.")
 
     def _format_as_or_group(self, string_var):
         """Converts comma-separated or raw words into quoted OR group: ("Word 1" OR "Word 2")"""
@@ -3616,75 +5105,156 @@ class GoogleLeadScraperSuite(tk.Tk):
             items = [text.strip('"\'')]
             
         formatted = " OR ".join([f'"{item}"' for item in items])
-        if len(items) > 1:
+        if len(items) > 1 or (len(items) == 1 and not items[0].startswith('"')):
             formatted = f'({formatted})'
         string_var.set(formatted)
         self._rebuild_query()
 
     def _rebuild_query(self):
-        """Assembles all form fields into a unified search query."""
+        """Assembles all form fields from the active criteria tab into a unified search query."""
         if self._updating_query:
             return
             
         parts = []
         
-        # 1. Site / Platform
-        site = self.site_preset_var.get().strip()
-        if site and "(All" not in site:
-            parts.append(site)
-            
-        # 2. Industry / Org
-        org = self.org_var.get().strip()
-        if org:
-            if not (org.startswith("(") and org.endswith(")")) and " OR " in org:
-                org = f"({org})"
-            parts.append(org)
-            
-        # 3. Titles / Roles
-        titles = self.titles_var.get().strip()
-        if titles:
-            if not (titles.startswith("(") and titles.endswith(")")) and " OR " in titles:
-                titles = f"({titles})"
-            parts.append(titles)
-            
-        # 4. Location
-        loc = self.location_var.get().strip()
-        if loc and "(Worldwide" not in loc:
-            parts.append(loc)
-            
-        # 5. Email hunting
-        if self.email_dork_var.get():
-            parts.append('("@gmail.com" OR "@yahoo.com" OR "@outlook.com" OR "@hotmail.com" OR "email me at")')
-            
-        custom_dom = self.custom_email_domain_var.get().strip()
-        if custom_dom:
-            if not custom_dom.startswith("@") and "." in custom_dom:
-                custom_dom = f"@{custom_dom}"
-            parts.append(f'"{custom_dom}"')
-            
-        # 6. Phone hunting
-        if self.phone_dork_var.get():
-            parts.append('("phone" OR "tel" OR "mobile" OR "contact")')
-            
-        # 7. Filetype
-        ft = self.filetype_var.get().strip()
-        if ft and ft != "None":
-            parts.append(ft)
-            
-        # 8. Exclusions
-        ex = self.exclude_var.get().strip()
-        if ex:
-            parts.append(ex)
-            
+        if self.active_criteria_mode == "targeted":
+            # 1. Site / Platform
+            site = self.site_preset_var.get().strip()
+            if site and "(All" not in site:
+                parts.append(site)
+                
+            # 2. Industry / Org
+            org = self.org_var.get().strip()
+            if org:
+                if not (org.startswith("(") and org.endswith(")")) and " OR " in org:
+                    org = f"({org})"
+                parts.append(org)
+                
+            # 3. Titles / Roles
+            titles = self.titles_var.get().strip()
+            if titles:
+                if not (titles.startswith("(") and titles.endswith(")")) and " OR " in titles:
+                    titles = f"({titles})"
+                parts.append(titles)
+                
+            # 4. Location
+            loc = self.location_var.get().strip()
+            if loc and "(Worldwide" not in loc:
+                parts.append(loc)
+                
+            # 5. Email hunting
+            if self.email_dork_var.get():
+                parts.append('("@gmail.com" OR "@yahoo.com" OR "@outlook.com" OR "@hotmail.com" OR "email me at")')
+                
+            custom_dom = self.custom_email_domain_var.get().strip()
+            if custom_dom:
+                if not custom_dom.startswith("@") and "." in custom_dom:
+                    custom_dom = f"@{custom_dom}"
+                parts.append(f'"{custom_dom}"')
+                
+            # 6. Phone hunting
+            if self.phone_dork_var.get():
+                parts.append('("phone" OR "tel" OR "mobile" OR "contact")')
+                
+            # 7. Filetype
+            ft = self.filetype_var.get().strip()
+            if ft and ft != "None":
+                parts.append(ft)
+                
+            # 8. Exclusions
+            ex = self.exclude_var.get().strip()
+            if ex:
+                parts.append(ex)
+                
+        else:
+            # Generalized Criteria Mode (Tab 2)
+            # Group 1: Facility / Industry / Sector Terms
+            ind = self.gen_industry_var.get().strip()
+            if ind:
+                if not (ind.startswith("(") and ind.endswith(")")) and " OR " in ind:
+                    ind = f"({ind})"
+                parts.append(ind)
+                
+            # Group 2: Operational Scale / Multi-Site Scope
+            scale = self.gen_scale_var.get().strip()
+            if scale:
+                if not (scale.startswith("(") and scale.endswith(")")) and " OR " in scale:
+                    scale = f"({scale})"
+                parts.append(scale)
+                
+            # Group 3: Geographic / Regional Scope
+            geo = self.gen_geo_var.get().strip()
+            if geo and "(Worldwide" not in geo:
+                if not (geo.startswith("(") and geo.endswith(")")) and " OR " in geo:
+                    geo = f"({geo})"
+                parts.append(geo)
+                
+            # Optional intext
+            intext = self.gen_intext_var.get().strip()
+            if intext:
+                if not intext.startswith("intext:"):
+                    intext = f'intext:"{intext.strip(chr(34))}"'
+                parts.append(intext)
+                
+            # Optional inurl
+            inurl = self.gen_inurl_var.get().strip()
+            if inurl:
+                if not inurl.startswith("inurl:"):
+                    inurl = f'inurl:{inurl}'
+                parts.append(inurl)
+                
+            # Optional site
+            site = self.gen_site_var.get().strip()
+            if site and "(All" not in site:
+                parts.append(site)
+                
+            # Email hunting
+            if self.gen_email_dork_var.get():
+                parts.append('("@gmail.com" OR "@yahoo.com" OR "@outlook.com" OR "@hotmail.com" OR "email me at")')
+                
+            # Phone hunting
+            if self.gen_phone_dork_var.get():
+                parts.append('("phone" OR "tel" OR "mobile" OR "contact")')
+                
+            # Filetype
+            ft = self.gen_filetype_var.get().strip()
+            if ft and ft != "None":
+                parts.append(ft)
+                
+            # Exclusions
+            ex = self.gen_exclude_var.get().strip()
+            if ex:
+                parts.append(ex)
+                
         final_query = " ".join(parts)
         self._updating_query = True
         self.assembled_query_var.set(final_query)
         self._updating_query = False
 
-    def _on_preset_selected(self, event):
+    def _on_preset_selected(self, event=None):
         combo_val = self.preset_combo.get()
+        if "TARGETED" in combo_val or "GENERALIZED" in combo_val or "ENVIRONMENTAL" in combo_val:
+            return
         if "Clean / Blank" in combo_val:
             self._reset_builder()
+        # UK Environmental Registers (EA / SEPA / NRW)
+        elif "EA: Waste Permitting" in combo_val:
+            self._load_preset("ea_waste_ops")
+        elif "EA: Waste Carriers" in combo_val:
+            self._load_preset("ea_waste_carriers")
+        elif "SEPA: Waste Carriers" in combo_val:
+            self._load_preset("sepa_waste")
+        elif "NRW: Waste Permitting" in combo_val:
+            self._load_preset("nrw_waste")
+        elif "Combined UK Regulators" in combo_val:
+            self._load_preset("combined_uk_env_registers")
+        elif "National Highways Leaders" in combo_val:
+            self._load_preset("national_highways_leaders")
+        elif "National Highways: Schemes" in combo_val:
+            self._load_preset("national_highways_gov")
+        elif "National Highways & Road" in combo_val:
+            self._load_preset("gen_highways")
+        # Targeted Presets (Tab 1)
         elif "Fire & Rescue" in combo_val:
             self._load_preset("fire_it")
         elif "NHS" in combo_val:
@@ -3713,169 +5283,66 @@ class GoogleLeadScraperSuite(tk.Tk):
             self._load_preset("number_range")
         elif "PDF Resumes" in combo_val:
             self._load_preset("resumes")
+        # Generalized Presets (Tab 2)
+        elif "Materials Recovery" in combo_val:
+            self._load_preset("gen_waste")
+        elif "Logistics & Distribution" in combo_val:
+            self._load_preset("gen_logistics")
+        elif "Commercial Transport" in combo_val:
+            self._load_preset("gen_fleet")
+        elif "Manufacturing & Industrial" in combo_val:
+            self._load_preset("gen_manufacturing")
+        elif "Energy, Biomass" in combo_val:
+            self._load_preset("gen_energy")
+        elif "Data Centers" in combo_val:
+            self._load_preset("gen_datacenters")
+        elif "Chemical & Hazardous" in combo_val:
+            self._load_preset("gen_chemical")
+        elif "Scrap Metal" in combo_val:
+            self._load_preset("gen_scrap")
         else:
             self._reset_builder()
 
     def _load_preset(self, preset_key):
-        self._updating_query = True
-        if preset_key == "fire_it":
-            self.site_preset_var.set("site:linkedin.com/in/")
-            self.org_var.set('("Fire and Rescue" OR "Fire Brigade")')
-            self.titles_var.set('("Head of IT" OR "Head of ICT" OR "Head of Technology" OR "Head of Data" OR "ICT Manager")')
-            self.location_var.set('"United Kingdom"')
-            self.email_dork_var.set(False)
-            self.phone_dork_var.set(False)
-            self.custom_email_domain_var.set("")
-            self.exclude_var.set("-jobs -recruiter -intern")
-            self.filetype_var.set("None")
-            
-        elif preset_key == "nhs_it":
-            self.site_preset_var.set("site:linkedin.com/in/")
-            self.org_var.set('("NHS Trust" OR "NHS Foundation Trust" OR "NHS England")')
-            self.titles_var.set('("Chief Information Officer" OR "CIO" OR "Director of IT" OR "Head of Digital" OR "Chief Digital Officer")')
-            self.location_var.set('"United Kingdom"')
-            self.email_dork_var.set(False)
-            self.phone_dork_var.set(False)
-            self.custom_email_domain_var.set("")
-            self.exclude_var.set("-jobs -recruitment")
-            self.filetype_var.set("None")
-            
-        elif preset_key == "gov_it":
-            self.site_preset_var.set("site:linkedin.com/in/")
-            self.org_var.set('("City Council" OR "Borough Council" OR "County Council" OR "Police")')
-            self.titles_var.set('("Head of IT" OR "Head of ICT" OR "Head of Digital" OR "ICT Director")')
-            self.location_var.set('"United Kingdom"')
-            self.email_dork_var.set(False)
-            self.phone_dork_var.set(False)
-            self.custom_email_domain_var.set("")
-            self.exclude_var.set("-jobs")
-            self.filetype_var.set("None")
-            
-        elif preset_key == "tech_founders":
-            self.site_preset_var.set("site:linkedin.com/in/")
-            self.org_var.set('("SaaS" OR "AI" OR "Fintech" OR "Startup")')
-            self.titles_var.set('("Founder" OR "Co-Founder" OR "CEO" OR "CTO")')
-            self.location_var.set('"London" OR "Greater London"')
-            self.email_dork_var.set(False)
-            self.phone_dork_var.set(False)
-            self.custom_email_domain_var.set("")
-            self.exclude_var.set("-jobs")
-            self.filetype_var.set("None")
-            
-        elif preset_key == "procurement":
-            self.site_preset_var.set("site:linkedin.com/in/")
-            self.org_var.set('("Public Sector" OR "Emergency Services" OR "NHS" OR "Council")')
-            self.titles_var.set('("Head of Procurement" OR "Procurement Director" OR "Head of Commercial" OR "Supply Chain Manager")')
-            self.location_var.set('"United Kingdom"')
-            self.email_dork_var.set(False)
-            self.phone_dork_var.set(False)
-            self.custom_email_domain_var.set("")
-            self.exclude_var.set("-jobs")
-            self.filetype_var.set("None")
-            
-        elif preset_key == "email_hunter":
-            self.site_preset_var.set("site:linkedin.com/in/")
-            self.org_var.set('("Fire and Rescue" OR "Emergency Services")')
-            self.titles_var.set('("Head of IT" OR "Director" OR "Manager")')
-            self.location_var.set('"United Kingdom"')
-            self.email_dork_var.set(True)
-            self.phone_dork_var.set(False)
-            self.custom_email_domain_var.set("")
-            self.exclude_var.set("-jobs")
-            self.filetype_var.set("None")
-
-        elif preset_key == "dev_code":
-            self.site_preset_var.set("site:stackoverflow.com OR site:github.com")
-            self.org_var.set('"TypeError" OR "Exception"')
-            self.titles_var.set("")
-            self.location_var.set("")
-            self.email_dork_var.set(False)
-            self.phone_dork_var.set(False)
-            self.custom_email_domain_var.set("")
-            self.exclude_var.set("")
-            self.filetype_var.set("None")
-
-        elif preset_key == "recent_tutorials":
-            self.site_preset_var.set("(All Websites / Open Web)")
-            self.org_var.set('intitle:tutorial (react OR python) after:2023')
-            self.titles_var.set("")
-            self.location_var.set("")
-            self.email_dork_var.set(False)
-            self.phone_dork_var.set(False)
-            self.custom_email_domain_var.set("")
-            self.exclude_var.set("")
-            self.filetype_var.set("None")
-
-        elif preset_key == "official_docs":
-            self.site_preset_var.set("site:docs.microsoft.com OR site:developer.mozilla.org")
-            self.org_var.set('javascript OR python')
-            self.titles_var.set("")
-            self.location_var.set("")
-            self.email_dork_var.set(False)
-            self.phone_dork_var.set(False)
-            self.custom_email_domain_var.set("")
-            self.exclude_var.set("")
-            self.filetype_var.set("None")
-
-        elif preset_key == "number_range":
-            self.site_preset_var.set("(All Websites / Open Web)")
-            self.org_var.set('phone $100..$500')
-            self.titles_var.set("")
-            self.location_var.set("")
-            self.email_dork_var.set(False)
-            self.phone_dork_var.set(False)
-            self.custom_email_domain_var.set("")
-            self.exclude_var.set("")
-            self.filetype_var.set("None")
-
-        elif preset_key == "index_of":
-            self.site_preset_var.set("(All Websites / Open Web)")
-            self.org_var.set('intext:"index of /"')
-            self.titles_var.set("")
-            self.location_var.set("")
-            self.email_dork_var.set(False)
-            self.phone_dork_var.set(False)
-            self.custom_email_domain_var.set("")
-            self.exclude_var.set("-inurl:(jsp|php|html|aspx|htm)")
-            self.filetype_var.set("None")
-
-        elif preset_key == "confidential_docs":
-            self.site_preset_var.set("(All Websites / Open Web)")
-            self.org_var.set('(intext:"confidential salary" OR intext:"budget approved") inurl:confidential')
-            self.titles_var.set("")
-            self.location_var.set("")
-            self.email_dork_var.set(False)
-            self.phone_dork_var.set(False)
-            self.custom_email_domain_var.set("")
-            self.exclude_var.set("")
-            self.filetype_var.set("filetype:pdf")
-
-        elif preset_key == "server_configs":
-            self.site_preset_var.set("(All Websites / Open Web)")
-            self.org_var.set('inurl:web.config inurl:ftp')
-            self.titles_var.set("")
-            self.location_var.set("")
-            self.email_dork_var.set(False)
-            self.phone_dork_var.set(False)
-            self.custom_email_domain_var.set("")
-            self.exclude_var.set("")
-            self.filetype_var.set("filetype:config")
-            
-        elif preset_key == "resumes":
-            self.site_preset_var.set("(All Websites / Open Web)")
-            self.org_var.set('("Fire and Rescue" OR "Fire Service")')
-            self.titles_var.set('("Head of IT" OR "ICT Manager")')
-            self.location_var.set('"United Kingdom"')
-            self.email_dork_var.set(False)
-            self.phone_dork_var.set(False)
-            self.custom_email_domain_var.set("")
-            self.exclude_var.set("")
-            self.filetype_var.set("filetype:pdf")
-            
-        elif preset_key == "custom":
+        if preset_key == "custom":
             self._reset_builder()
             return
             
+        if preset_key == "gen_waste":
+            self._load_waste_facility_example()
+            return
+
+        self._updating_query = True
+        mode, p_data = data_loader.get_preset_data(preset_key)
+
+        if mode == "targeted":
+            self.criteria_notebook.select(self.subtab_targeted)
+            self.active_criteria_mode = "targeted"
+            self.site_preset_var.set(p_data.get("site", ""))
+            self.org_var.set(p_data.get("org", ""))
+            self.titles_var.set(p_data.get("titles", ""))
+            self.location_var.set(p_data.get("location", ""))
+            self.email_dork_var.set(bool(p_data.get("email_dork", False)))
+            self.phone_dork_var.set(bool(p_data.get("phone_dork", False)))
+            self.custom_email_domain_var.set(p_data.get("custom_email_domain", ""))
+            self.exclude_var.set(p_data.get("exclude", ""))
+            self.filetype_var.set(p_data.get("filetype", "None"))
+        elif mode == "generalized":
+            self.criteria_notebook.select(self.subtab_generalized)
+            self.active_criteria_mode = "generalized"
+            self.gen_industry_var.set(p_data.get("industry", ""))
+            self.gen_scale_var.set(p_data.get("scale", ""))
+            self.gen_geo_var.set(p_data.get("geo", ""))
+            self.gen_exclude_var.set(p_data.get("exclude", ""))
+            self.gen_intext_var.set(p_data.get("intext", ""))
+            self.gen_inurl_var.set(p_data.get("inurl", ""))
+            self.gen_site_var.set(p_data.get("site", ""))
+            self.gen_filetype_var.set(p_data.get("filetype", "None"))
+            self.gen_email_dork_var.set(bool(p_data.get("email_dork", False)))
+            self.gen_phone_dork_var.set(bool(p_data.get("phone_dork", False)))
+        else:
+            self._reset_builder()
+
         self._updating_query = False
         self._rebuild_query()
 
@@ -4168,6 +5635,28 @@ class GoogleLeadScraperSuite(tk.Tk):
             custom_dom = self.custom_email_domain_var.get() if hasattr(self, "custom_email_domain_var") else ""
             resolved_dom = resolve_organization_domain(company, headline, snippet, industry, custom_dom)
             
+            # If domain not matched via public sector registry, extract domain directly from destination URL
+            if not resolved_dom and href:
+                try:
+                    parsed_netloc = urllib.parse.urlparse(href).netloc.lower()
+                    clean_netloc = re.sub(r'^www\.', '', parsed_netloc)
+                    if clean_netloc and not any(se in clean_netloc for se in ['google.', 'bing.', 'duckduckgo.', 'brave.', 'yahoo.', 'yandex.', 'ahmia.', 'linkedin.']):
+                        resolved_dom = clean_netloc
+                except Exception:
+                    pass
+
+            # If company missing on open-web results, extract from title or domain
+            if not company:
+                title_parts = [p.strip() for p in re.split(r'\s+[-|–—]\s+', clean_title) if p.strip()]
+                if len(title_parts) >= 2:
+                    company = title_parts[0]
+                    if not headline:
+                        headline = " - ".join(title_parts[1:])
+                elif resolved_dom:
+                    dom_base = resolved_dom.split('.')[0].capitalize()
+                    if dom_base and len(dom_base) > 2:
+                        company = dom_base
+
             raw_email = ", ".join(list(dict.fromkeys(emails))) if emails else ""
             
             # Pre-synthesize email candidate if domain is resolved and no raw email was found

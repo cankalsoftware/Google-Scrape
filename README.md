@@ -10,8 +10,10 @@ A modern Python & Tkinter desktop application for precision OSINT, advanced Goog
 
 - **⚡ Automated Email Enrichment & Deliverability Verification**:
   - **Entity Parsing**: Automatically extracts clean First Name, Surname, Job Role, and Organisation from LinkedIn snippets.
-  - **UK Fire & Rescue Services Domain Normalizer**: Comprehensive built-in registry matching all 50+ UK Fire Services (London Fire Brigade, GMFRS, WMFS, HIWFRS, Scottish Fire, etc.) to official `.gov.uk`, `.org.uk`, and `.net` domains.
-  - **Multi-Industry Support**: Extensible registry supporting NHS Trusts (`.nhs.uk`), Local Councils (`.gov.uk`), Police Constabularies (`.police.uk`), and custom corporate domains.
+  - **UK Public Sector & Environmental Domain Normalizers**: Comprehensive built-in registries matching:
+    - **UK Fire & Rescue Services**: 50+ services (London Fire Brigade, GMFRS, WMFS, HIWFRS, Scottish Fire, etc.) to `.gov.uk`, `.org.uk`, and `.net`.
+    - **UK Environmental Regulators & Waste Registers**: Environment Agency (`environment.data.gov.uk`), Scottish Environment Protection Agency (`sepa.org.uk`), and Natural Resources Wales / Cyfoeth Naturiol Cymru (`naturalresources.wales`).
+    - **Public Sector & Healthcare**: NHS Trusts (`.nhs.uk`), Local Councils (`.gov.uk`), and Police Constabularies (`.police.uk`).
   - **DNS MX Mailbox Verification**: Resolves live DNS MX records via `dnspython` to verify active Microsoft 365, Mimecast, and government secure mail gateways before displaying emails.
   - **Deliverability Status Badges**: `🟢 Valid (MX Verified)`, `🟡 Risky`, `⚪ Not Found`, `🔴 Invalid (No MX)`.
   - **Modular API Integrations**: Works 100% free with the built-in MX pattern synthesizer or integrates seamlessly with external APIs (Hunter.io, Apollo.io, Snov.io).
@@ -30,8 +32,26 @@ A modern Python & Tkinter desktop application for precision OSINT, advanced Goog
   - Google, Bing, DuckDuckGo, Brave Search, Yahoo, Yandex, and Ahmia (Tor/Onion web).
 - **🧅 Tor SOCKS5 Proxy Routing**:
   - 1-click option to route queries through Tor (`socks5://127.0.0.1:9150` or `9050`) for anonymous searches.
-- **🛠️ Interactive Query Builder**:
-  - Live query generator with support for manual `site:` restrictions, industry keywords, boolean `OR` groups, job titles, location filters, email & phone hunting dorks, and filetype filters.
+- **🛠️ Dual-Strategy Query Builder & Ready Templates**:
+  - **Sub-Tab 1 (Targeted Site & Profile Search)**: Live query generator for precision dorking with `site:` restrictions (LinkedIn, Environment Agency Public Register, SEPA, NRW, government portals), job titles, location filters, email & phone hunting dorks, and filetype filters.
+  - **Sub-Tab 2 (Generalized Industry & Facility Search)**: Multi-group boolean query builder for discovering commercial facilities, distribution networks, fleet depots, and multi-site operations across the open web with 1-click facility templates, operational scale filters, regional boundary groups, and negative exclusions.
+  - **Pre-Populated UK Environmental Register Searches**:
+    1. *EA England Waste Permitting & Operations*: `site:environment.data.gov.uk/public-register/ ("Environmental Permitting Regulations – Waste Operations" OR "Materials recovery" OR "Waste transfer") -council -civic -household -tip -hwrc`
+    2. *EA England Registered Carriers & Brokers*: `site:environment.data.gov.uk/public-register/ "Register of Waste Carriers, Brokers and Dealers" ("Carrier and Broker" OR "Dealer") ("Limited" OR "Ltd" OR "PLC") -council -individual`
+    3. *SEPA Scotland Waste Authorisations*: `site:sepa.org.uk ("Register of Waste Carriers" OR "authorisations" OR "waste transfer" OR "materials recovery") ("Limited" OR "Ltd" OR "PLC") -council`
+    4. *NRW Wales Waste Permitting*: `site:naturalresources.wales ("waste permitting" OR "waste carriers, brokers and dealers" OR "waste transfer") ("Limited" OR "Ltd" OR "PLC") -council -cyngor`
+    5. *Combined UK Regulators*: `(site:environment.data.gov.uk/public-register/ OR site:sepa.org.uk OR site:naturalresources.wales) ("waste operations" OR "materials recovery" OR "waste transfer station" OR "waste carrier") ("Limited" OR "Ltd" OR "PLC") -council -cyngor -civic -household -tip -hwrc`
+- **📥 Direct Open Data & Public Register Downloader (No Web Scraping Needed)**:
+  - **Direct Bulk Dataset Downloads**: Pulls complete national registers directly via open data links and archives (ZIP/CSV) with zero CAPTCHAs, search engine rate limits, or blocks.
+  - **Built-in Official Portals & Registries**:
+    - *Environment Agency (England)*: Permitted Waste Operations dataset & Registered Waste Carriers/Brokers directory.
+    - *NFCC (National Fire Chiefs Council)*: UK Chief Fire Officers Directory parser (extracts names, leadership titles, and fire services).
+    - *SEPA (Scotland)*: Scottish Waste Carriers Register & Public Authorisations portal.
+    - *Natural Resources Wales*: Welsh environmental permits, exemptions, and carrier registers.
+    - *data.gov.uk*: Central UK open government data portal.
+  - **Custom Link Fetcher & Local File Importer**: Paste ANY custom URL (direct `.csv`, `.zip`, `.xlsx`, or web directory page) or load local files from disk.
+  - **Persistent Saved Sources (`registry_sources.json`)**: Save and manage custom registry URLs permanently in a convenient dropdown.
+  - **1-Click Bridges**: Instantly send loaded registry records to **Tab 2 (Leads Table)** for automated domain resolution and email synthesis, or to **Tab 3 (Verifier)** for MX/SMTP mail server checks.
 - **📖 Comprehensive Search Operators Cheat Sheet**:
   - Integrated cheatsheet with 1-click templates for developers, cybersecurity researchers, and lead generators.
   - Hover tooltips and `(?)` help badges explaining every search operator.
@@ -71,8 +91,11 @@ python scraper_gui.py
 ## 🛠️ Usage Guide
 
 ### 1. Build Your Query & Search
-1. In **Tab 1 (Query Builder & Presets)**, choose your search engine (Google, Bing, Brave, DuckDuckGo) or load a pre-configured template (e.g., *Fire & Rescue IT Leaders (UK)*).
-2. Click **🚀 Search & Extract Leads**.
+1. In **Tab 1 (Query Builder & Presets)**, choose your search engine (Google, Bing, Brave, DuckDuckGo) or load a pre-configured template.
+2. Select your search strategy sub-tab:
+   - **🎯 Tab 1 (Targeted Site & Profile Search)**: Restrict to specific sites like LinkedIn with job roles and location filters.
+   - **🌐 Tab 2 (Generalized Industry & Facility Search)**: Build multi-group boolean searches combining facility types (e.g. *Materials Recovery Facilities*, *Distribution Hubs*), operational footprint (*multiple sites*, *depots across*), geographic scope (*UK*, *England*, *Scotland*, *Wales*), and negative exclusions (*-council -civic -household -tip -hwrc -.gov.uk*). Click **`⭐ Load Waste & Facility Example`** for 1-click loading.
+3. Click **🚀 Search & Extract Leads**.
 
 ### 2. Enrich Leads & Verify Emails
 1. Switch to **Tab 2 (Extracted Results & Text Box)**.
@@ -116,7 +139,50 @@ If you want to run heavy Google Dork queries without CAPTCHAs:
 2. Log into your Google Account in the opened Chrome window and close it when finished.
 3. The scraper will now automatically reuse your authenticated Google session.
 
-Alternatively, select **`🦆 DuckDuckGo`** or **`🟦 Bing`** from the Search Engine dropdown, which index web results without CAPTCHA restrictions.
+---
+
+## 🏗️ Modular Architecture & Hybrid Storage Model
+
+The suite follows a **Hybrid Storage Model** separating UI presentation from dynamic configurations and transactional database state:
+
+```
+Google Scrape/
+├── scraper_gui.py             # 🖥️ Main Tkinter Application & UI Controller
+├── data_loader.py             # 🔄 Resilient JSON Configuration Loader & Fallback Manager
+├── storage.py                 # 🗄️ SQLite Database Manager & Persistent MX Cache
+│
+├── data/                      # 📁 Configuration & Reference Data (JSON)
+│   ├── domains.json           # UK Public Sector, Environment & Transport domain dictionaries
+│   ├── presets.json           # Targeted profile and generalized multi-group search templates
+│   ├── dorks_cheatsheet.json  # Search operators, dev dorks, and OSINT security recipes
+│   └── registry_sources.json  # Pre-configured official open data and public register links
+│
+└── db/                        # 📁 Transactional State Storage (SQLite)
+    └── scraper_storage.db     # Persistent DNS MX Cache, Search Query History & Leads DB
+```
+
+### 1. JSON Configuration Files (`data/`)
+- **`data/domains.json`**: Contains structured domain mappings across sectors:
+  - `fire_services`: 50+ UK Fire & Rescue Services (`.gov.uk`, `.org.uk`, `.net`).
+  - `environment`: Environment Agency, SEPA, and Natural Resources Wales registers.
+  - `transport_highways`: National Highways, Highways England, TfL, Network Rail, DVSA, DVLA.
+  - `nhs`: NHS England, trusts, and healthcare authorities (`.nhs.uk`).
+  - `councils`: City, borough, and county councils (`.gov.uk`).
+  - `police`: UK police constabularies (`.police.uk`).
+  - *Customization*: Add any company or sector domain directly to `data/domains.json` without modifying Python source code.
+- **`data/presets.json`**: Pre-configured targeted and generalized search templates. Adding a new industry search to JSON automatically makes it available across all UI dropdowns.
+- **`data/dorks_cheatsheet.json`**: Full reference of Google Dork operators, developer debugging recipes, and security patterns.
+- **`data/registry_sources.json`**: Direct open data download portals for Tab 4.
+
+### 2. SQLite Database Persistence (`db/scraper_storage.db`)
+- **Persistent DNS MX Cache (`mx_cache`)**:
+  - Automatically caches DNS MX lookups and Catch-All server tests across app restarts.
+  - Subsequent verification runs on known domains execute at **0ms in-memory/disk speed** with zero network DNS round-trips.
+- **Search Query History (`search_history`)**:
+  - High-performance, timestamped audit log of all executed searches, engine types, and collected lead counts.
+  - 1-click recall into Query Builder.
+- **Saved Leads Table (`saved_leads`)**:
+  - ACID-safe persistent backup for scraped contacts and enriched corporate email records.
 
 ---
 

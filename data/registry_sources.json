@@ -1,0 +1,58 @@
+[
+  {
+    "name": "\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc65\udb40\udc6e\udb40\udc67\udb40\udc7f EA: Permitted Waste Operations (England Bulk ZIP/CSV)",
+    "url": "https://environment.data.gov.uk/public-register/downloads/waste-operations",
+    "web_url": "https://environment.data.gov.uk/public-register/view/search-waste-operations",
+    "category": "England - Environment Agency",
+    "description": "Complete bulk open dataset of all permitted waste sites, facilities, materials recovery operations, permit holders, and postcodes in England."
+  },
+  {
+    "name": "\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc65\udb40\udc6e\udb40\udc67\udb40\udc7f EA: Waste Carriers, Brokers & Dealers (England Bulk CSV)",
+    "url": "https://environment.data.gov.uk/public-register/downloads/waste-carriers-brokers",
+    "web_url": "https://environment.data.gov.uk/public-register/view/search-waste-carriers-brokers",
+    "category": "England - Environment Agency",
+    "description": "Complete export of active registered commercial waste carriers, brokers, dealers, and registered companies in England."
+  },
+  {
+    "name": "\ud83d\ude92 NFCC: Chief Fire Officers Directory (UK)",
+    "url": "https://nfcc.org.uk/contacts/chief-fire-officers/",
+    "web_url": "https://nfcc.org.uk/contacts/chief-fire-officers/",
+    "category": "UK - Fire & Rescue Leadership",
+    "description": "Official national directory of all UK Chief Fire Officers, Service names, leadership contacts, and headquarters."
+  },
+  {
+    "name": "\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc73\udb40\udc63\udb40\udc74\udb40\udc7f SEPA: Scottish Waste Carriers Register",
+    "url": "https://www2.sepa.org.uk/wastecarriers/",
+    "web_url": "https://www2.sepa.org.uk/wastecarriers/",
+    "category": "Scotland - SEPA",
+    "description": "SEPA registered waste carriers, registration numbers, business names, and Scottish authority records."
+  },
+  {
+    "name": "\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc73\udb40\udc63\udb40\udc74\udb40\udc7f SEPA: Search the Public Register Portal",
+    "url": "https://search-the-register.sepa.org.uk/",
+    "web_url": "https://search-the-register.sepa.org.uk/",
+    "category": "Scotland - SEPA",
+    "description": "Scottish environmental authorisations, waste management licenses, and exemptions portal."
+  },
+  {
+    "name": "\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc77\udb40\udc6c\udb40\udc73\udb40\udc7f NRW: Natural Resources Wales Public Register",
+    "url": "https://naturalresources.wales/permits-and-permissions/check-for-a-permit-licence-or-exemption/",
+    "web_url": "https://naturalresources.wales/permits-and-permissions/check-for-a-permit-licence-or-exemption/",
+    "category": "Wales - Natural Resources Wales",
+    "description": "Welsh public register of waste exemptions, environmental permits, and carriers."
+  },
+  {
+    "name": "\ud83d\udee3\ufe0f National Highways: Strategic Road Network & Projects (UK)",
+    "url": "https://nationalhighways.co.uk/our-roads/",
+    "web_url": "https://data.gov.uk/publisher/highways-england",
+    "category": "UK - Highways & Transport Infrastructure",
+    "description": "National Highways projects, road schemes, framework suppliers, regional operational centers, and government open data."
+  },
+  {
+    "name": "\ud83c\uddec\ud83c\udde7 UK Government Open Data Portal (data.gov.uk)",
+    "url": "https://data.gov.uk/",
+    "web_url": "https://data.gov.uk/",
+    "category": "UK - Central Government",
+    "description": "UK central open government data portal covering public registers across all departments."
+  }
+]

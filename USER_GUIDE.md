@@ -13,8 +13,9 @@ Welcome to the **Multi-Engine Lead & Advanced Dork Extractor Suite**! This guide
    - [Tab 1: Query Builder & Search](#tab-1-query-builder--search)
    - [Tab 2: Results, Enrichment & Exporting](#tab-2-results-enrichment--exporting)
    - [Tab 3: Email & CSV Verifier (MX & SMTP Handshake)](#tab-3-email--csv-verifier-mx--smtp-handshake)
-   - [Tab 4: Search Operators Cheat Sheet](#tab-4-search-operators-cheat-sheet)
-   - [Tab 5: Search History & Recall](#tab-5-search-history--recall)
+   - [Tab 4: Direct Open Data & Public Registers (CSV/ZIP/Directories)](#tab-4-direct-open-data--public-registers-csvzipdirectories)
+   - [Tab 5: Search Operators Cheat Sheet](#tab-5-search-operators-cheat-sheet)
+   - [Tab 6: Search Query History Log](#tab-6-search-query-history-log)
 5. [Understanding Deliverability Badges](#5-understanding-deliverability-badges)
 6. [Bypassing CAPTCHAs & Google Blocks](#6-bypassing-captchas--google-blocks)
 7. [Configuring Enrichment Settings (Custom Domains & APIs)](#7-configuring-enrichment-settings-custom-domains--apis)
@@ -120,17 +121,64 @@ This tab is your control center for finding contacts.
 - **Bing**: Excellent for business and Microsoft-indexed profiles.
 - **Tor / Ahmia**: Direct darknet / onion network search (requires Tor running).
 
-#### 2. Search Criteria Form
-- **Target Site (`site:`)**: Restricts search to a specific domain (e.g. `site:linkedin.com/in/` or `site:gov.uk`).
-- **Industry / Keyword**: What sector or company to find (e.g. `"Fire and Rescue"` or `"NHS Trust"`).
+#### 2. Search Criteria & Strategy Selector (Sub-Tabs)
+
+The Search Criteria section features two dedicated strategy tabs:
+
+##### 🎯 Sub-Tab 1: Targeted Site & Profile Search (`site:`)
+Best for laser-focused searches on a specific platform (like LinkedIn profiles, GitHub, government portals, or single domains):
+- **Target Site (`site:`)**: Restricts search to a specific domain. Choose from presets like:
+  - `site:environment.data.gov.uk/public-register/` *(England - Environment Agency Public Register)*
+  - `site:sepa.org.uk` *(Scotland - Scottish Environment Protection Agency)*
+  - `site:naturalresources.wales` *(Wales - Natural Resources Wales / Cyfoeth Naturiol Cymru)*
+  - `(site:environment.data.gov.uk/public-register/ OR site:sepa.org.uk OR site:naturalresources.wales)` *(Combined UK Regulators)*
+  - `site:linkedin.com/in/`, `site:gov.uk`, `site:github.com`, etc.
+- **Industry / Keyword**: What sector or company to find (e.g. `"Fire and Rescue"`, `"NHS Trust"`, or `"Environmental Permitting Regulations – Waste Operations"`).
   - *Tip: Click `+ Quotes/OR` to format words automatically.*
-- **Job Titles / Roles**: Target positions (e.g. `"Head of IT" OR "CTO" OR "Director"`).
-- **Location / Region**: Target geography (e.g. `"United Kingdom"`, `"London"`, `"United States"`).
+- **Job Titles / Roles**: Target positions (e.g. `"Head of IT" OR "CTO" OR "Director"`, or carrier roles like `"Carrier and Broker" OR "Dealer"`).
+- **Location / Region**: Target geography (e.g. `"United Kingdom"`, `"London"`, `"United States"`, or company forms like `"Limited" OR "Ltd" OR "PLC"`).
 - **Contact Dorks**:
   - Check **`Public Emails`** to prioritize profiles that publicly posted `@gmail` or `@outlook` emails.
   - Check **`Phone / Tel`** to find contacts with phone numbers.
-- **Exclude Words (`-`)**: Filter out noise like `-jobs -recruiter -hiring -intern`.
+- **Exclude Words (`-`)**: Filter out noise like `-jobs -recruiter -hiring -intern`, `-council -civic -household -tip -hwrc`, or `-council -individual`.
 - **Filetype (`filetype:`)**: Filter for downloadable files like `filetype:pdf` (for CVs/resumes) or `filetype:xls`.
+
+##### ♻️ Pre-Configured UK Environmental Protection Agency Templates
+Quickly accessible via the **`Load Template:`** dropdown in Tab 1 or the **Cheatsheet (Tab 4)**:
+1. **🏴󠁧󠁢󠁥󠁮󠁧󠁿 EA: Waste Permitting & Operations (England)**:
+   - Query: `site:environment.data.gov.uk/public-register/ ("Environmental Permitting Regulations – Waste Operations" OR "Materials recovery" OR "Waste transfer") -council -civic -household -tip -hwrc`
+   - *Targets*: Commercial materials recovery facilities (MRFs), waste transfer stations, and permitted waste processors across England, excluding municipal tips.
+2. **🏴󠁧󠁢󠁥󠁮󠁧󠁿 EA: Waste Carriers, Brokers & Dealers (England)**:
+   - Query: `site:environment.data.gov.uk/public-register/ "Register of Waste Carriers, Brokers and Dealers" ("Carrier and Broker" OR "Dealer") ("Limited" OR "Ltd" OR "PLC") -council -individual`
+   - *Targets*: Commercial waste transport companies, registered brokers, and scrap dealers (filtered specifically for Ltd/PLC registered companies).
+3. **🏴󠁧󠁢󠁳󠁣󠁴󠁿 SEPA: Waste Carriers & Authorisations (Scotland)**:
+   - Query: `site:sepa.org.uk ("Register of Waste Carriers" OR "authorisations" OR "waste transfer" OR "materials recovery") ("Limited" OR "Ltd" OR "PLC") -council`
+   - *Targets*: Scottish Environment Protection Agency registered waste carriers, commercial transfer stations, and material recovery facilities in Scotland.
+4. **🏴󠁧󠁢󠁷󠁬󠁳󠁿 NRW: Waste Permitting & Carriers (Wales)**:
+   - Query: `site:naturalresources.wales ("waste permitting" OR "waste carriers, brokers and dealers" OR "waste transfer") ("Limited" OR "Ltd" OR "PLC") -council -cyngor`
+   - *Targets*: Natural Resources Wales / Cyfoeth Naturiol Cymru permitted facilities, brokers, and carriers with bilingual exclusions.
+5. **🇬🇧 Combined UK Regulators (EA / SEPA / NRW)**:
+   - Query: `(site:environment.data.gov.uk/public-register/ OR site:sepa.org.uk OR site:naturalresources.wales) ("waste operations" OR "materials recovery" OR "waste transfer station" OR "waste carrier") ("Limited" OR "Ltd" OR "PLC") -council -cyngor -civic -household -tip -hwrc`
+   - *Targets*: Cross-UK unified search covering England, Scotland, and Wales in a single query.
+6. **🛣️ National Highways Leaders & Project Directors (UK)**:
+   - Query: `site:linkedin.com/in/ ("National Highways" OR "Highways England" OR "Highways Agency") ("Project Director" OR "Programme Director" OR "Head of" OR "Commercial Director" OR "Operations Manager" OR "Head of IT" OR "Procurement") "United Kingdom" -jobs -recruiter -recruiting -careers`
+   - *Targets*: Key decision-makers, commercial heads, IT leaders, and programme directors across National Highways.
+7. **🛣️ National Highways: Schemes, Tenders & Contacts**:
+   - Query: `site:nationalhighways.co.uk ("procurement" OR "framework contracts" OR "commercial" OR "schemes" OR "consultation") ("Director" OR "Head of" OR "Project Manager" OR "Commercial Manager" OR "Contact") -careers -vacancies`
+   - *Targets*: Official National Highways contract frameworks, major road project schemes, and named departmental points of contact.
+8. **🛣️ National Highways & Road Network Depots (UK)**:
+   - Query: `("National Highways" OR "Highways England" OR "Strategic Road Network" OR "major road network" OR "highways contractor") ("regional operations centre" OR "maintenance depot" OR "outstation" OR "framework supplier" OR "head office") ("United Kingdom" OR "UK" OR "England" OR "Scotland" OR "Wales") -council -household -tip -hwrc -vacancies -careers`
+   - *Targets*: Outstations, regional control centres, maintenance facilities, and infrastructure contractors across the UK strategic road network.
+
+##### 🌐 Sub-Tab 2: Generalized Industry & Facility Search (Multi-Group Boolean)
+Best for discovering commercial operations, industrial facilities, distribution networks, fleet depots, and multi-site companies across the open web using structured multi-group boolean operators:
+- **⭐ 1-Click Waste & Facility Example**: Click the button at the top to instantly load:
+  `("Materials Recovery Facility" OR "waste transfer station" OR "commercial recycling facility") ("multiple sites" OR "depots across" OR "nationwide" OR "head office") ("United Kingdom" OR "UK" OR "England" OR "Scotland" OR "Wales") -council -civic -household -tip -hwrc -.gov.uk`
+- **Group 1: Facility / Industry Terms (OR)**: Enter facility types or pick presets (e.g., *Materials Recovery & Waste Facilities*, *Logistics & Distribution Warehouses*, *Fleet Operating Depots*, *Manufacturing Plants*, *Energy & Biomass*, *Data Centers*, *Chemical/COMAH Sites*, *Scrap & Metal Recycling*).
+- **Group 2: Operational Scale & Multi-Site Scope (OR)**: Define footprint requirements or pick presets (*Multi-Site & Nationwide*, *Regional Hubs & Depots*, *Corporate HQ*, *UK-Wide Coverage*).
+- **Group 3: Geographic & Country Filter (OR)**: Define national/regional boundaries (*UK & Home Nations*, *England & London*, *Scotland & NI*, *USA Nationwide*, *Europe*).
+- **Group 4: Negative Exclusions & Cleaners (-)**: Filter out unwanted public or consumer sites (*Exclude Municipal/Council Tips & .gov.uk*, *Exclude Job Boards*, *Exclude Public Sector*, *Exclude Directories*).
+- **Optional Modifiers**: Add `intext:` or `inurl:` filters, filetype extensions, or public email/phone hunters.
 
 #### 3. Browser Display Options
 - **👻 Silent (No Window - Default)**: Chrome runs completely invisibly in the background.
@@ -297,20 +345,85 @@ sequenceDiagram
 
 ---
 
-### Tab 4: Search Operators Cheat Sheet
+### Tab 4: Direct Open Data & Public Registers (CSV/ZIP/Directories)
+
+Why scrape Google result pages one by one when government agencies and national directories publish the **complete official registers for direct bulk download**?
+
+Tab 4 allows you to pull complete datasets (thousands of companies, permit numbers, postcodes, and leadership contacts) directly into the app with zero CAPTCHAs, zero rate limits, and zero search engine blocks.
+
+```mermaid
+graph TD
+    A["📜 Pick Official Source OR Paste Custom URL"] --> B["📥 Fetch & Download Data"]
+    B --> C["📊 Live Table Preview & Filter"]
+    C --> D1["⚡ Send to Leads Table (Tab 2) -> Instant Batch Email Enrichment"]
+    C --> D2["⚡ Send to Verifier (Tab 3) -> Direct MX/SMTP Mail Server Testing"]
+    C --> D3["💾 Export Complete Dataset as CSV"]
+```
+
+#### 1. Pre-Configured Official Direct Register Downloads & Portals
+
+Select any of the built-in official open data sources from the **`📜 Select Source:`** dropdown:
+
+| Registry Source | Jurisdiction | Format | Description |
+| :--- | :--- | :--- | :--- |
+| **🏴󠁧󠁢󠁥󠁮󠁧󠁿 EA: Permitted Waste Operations** | England (Environment Agency) | Direct `.zip` archive / CSV | Complete national open dataset of all permitted waste processing sites, materials recovery facilities (MRFs), permit holder company names, and site postcodes. |
+| **🏴󠁧󠁢󠁥󠁮󠁧󠁿 EA: Waste Carriers, Brokers & Dealers** | England (Environment Agency) | Direct `.csv` / `.zip` export | Active registered commercial waste transport carriers, brokers, scrap dealers, registration numbers, and limited company names. |
+| **🚒 NFCC: Chief Fire Officers Directory** | United Kingdom (NFCC) | Live Web Directory | Official national directory of all 55 UK Chief Fire Officers, Service names, leadership contacts, and headquarters. |
+| **🏴󠁧󠁢󠁳󠁣󠁴󠁿 SEPA: Scottish Waste Carriers Register** | Scotland (SEPA) | Web Directory / Portal | Official Scottish Environment Protection Agency register of waste carriers and authorisations. |
+| **🏴󠁧󠁢󠁳󠁣󠁴󠁿 SEPA: Search the Public Register** | Scotland (SEPA) | Search Portal | Scottish environmental licenses, waste management authorisations, and exemptions. |
+| **🏴󠁧󠁢󠁷󠁬󠁳󠁿 NRW: Natural Resources Wales** | Wales (Cyfoeth Naturiol Cymru) | Search Portal | Welsh public register of waste exemptions, environmental permits, and commercial carriers. |
+| **🇬🇧 UK Government Open Data (data.gov.uk)** | UK Central Government | Open Data Portal | Central portal indexing thousands of public sector and regulatory open datasets. |
+
+#### 2. Downloading & Inspecting Data (Step-by-Step)
+
+1. **Pick a Source or Paste a URL**:
+   - Select an official registry from the dropdown and click **`⚡ Load Source`**.
+   - Or paste any direct download link (`.csv`, `.zip`, `.xlsx`) or web directory page (like `https://nfcc.org.uk/contacts/chief-fire-officers/`) into **`Registry URL:`**.
+   - *(Optional)* Click **`📂 Local File...`** to load a `.csv` or `.zip` file from your disk.
+2. **Set Max Rows**: Set **`Max Rows:`** (e.g. `500`, `2500`, or `10000`).
+3. **Click `📥 Fetch & Download Data`**:
+   - The app automatically downloads the file, unzips archives in memory, parses CSV headers, or scrapes structured directory tables.
+4. **Inspect in the Interactive Preview Table**:
+   - Sort columns alphabetically by clicking on any header (e.g. **`Business Name`**, **`Permit Number`**, **`Address`**).
+   - Type in **`🔍 Search Filter:`** to filter live records.
+
+#### 3. Instant Lead Conversion & 1-Click Email Enrichment
+
+- **⚡ Send Records to Leads Table (Tab 2)**:
+  - Click this button to map company names, permit holders, and directory entries into **Tab 2 (Leads Table)**.
+  - Switch to Tab 2 and click **`⚡ Batch Enrich All`**!
+  - The app will automatically resolve company website domains, generate work emails, and verify mail servers with green `🟢 Valid (MX Verified)` badges!
+- **⚡ Send to Email Verifier (Tab 3)**:
+  - Bridges any email addresses found directly to Tab 3 for live MX and SMTP handshake testing.
+- **💾 Export Dataset as CSV**:
+  - Saves the entire loaded or filtered dataset to a clean `.csv` file on your computer.
+
+#### 4. Saving & Managing Custom Registry Presets
+
+- If you find a new registry URL:
+  1. Paste the link in **`Registry URL:`**.
+  2. Give it a friendly name in **`Label / Name:`** (e.g. *"Manchester Council Waste Licenses"*).
+  3. Click **`💾 Save to List`**.
+  4. Your new source is permanently saved to `registry_sources.json` and will always appear in your dropdown!
+- To remove custom entries, select it and click **`🗑️ Delete Source`**.
+- To restore defaults, click **`🔄 Reset Defaults`**.
+
+---
+
+### Tab 5: Search Operators Cheat Sheet
 
 Need inspiration for advanced searches?
-- Tab 4 contains an interactive library of Google Dork operators (`site:`, `inurl:`, `intitle:`, `filetype:`, `before:`, `after:`, etc.).
+- Tab 5 contains an interactive library of Google Dork operators (`site:`, `inurl:`, `intitle:`, `filetype:`, `before:`, `after:`, etc.).
 - **Smooth Mouse Wheel Scrolling**: Scroll up and down effortlessly through all operator guides and ready-made dork templates.
 - Click **`⚡ Load into Builder`** on any recipe to instantly load pre-built searches into Tab 1.
 
 ---
 
-### Tab 5: Search History & Recall
+### Tab 6: Search Query History Log
 
 - Every search you run is automatically saved with a timestamp and search engine tag.
 - If you ran a great search yesterday and want to run it again:
-  1. Go to **Tab 5 (History Log)**.
+  1. Go to **Tab 6 (History Log)**.
   2. Click on the past query.
   3. Click **`⚡ Recall Selected into Builder`**.
 
@@ -355,9 +468,12 @@ Click **`⚙️ Enrichment Settings`** in Tab 2 to customize:
 ### 1. Target Industry Registry
 Choose built-in domain dictionaries:
 - **🚒 UK Fire & Rescue Services**: Automatically maps all 50+ UK services (`london-fire.gov.uk`, `manchesterfire.gov.uk`, `wmfs.net`, etc.).
+- **🛣️ UK Transport & National Highways**: Maps National Highways (`nationalhighways.co.uk`), TfL, Network Rail, DVSA.
+- **♻️ UK Environmental Protection**: Maps Environment Agency, SEPA, and Natural Resources Wales registers.
 - **🏥 NHS Trusts & Health Boards**: Maps hospitals to official `.nhs.uk` domains.
 - **🏛️ UK Local Councils**: Maps borough, county, and city councils to `.gov.uk`.
 - **👮 UK Police Constabularies**: Maps forces to `.police.uk`.
+- **📁 Adding Custom Domains Permanently**: You can open [data/domains.json](file:///c:/Users/uyko7/Documents/VSCode/Google%20Scrape/data/domains.json) or [data/presets.json](file:///c:/Users/uyko7/Documents/VSCode/Google%20Scrape/data/presets.json) in any text editor to permanently add your own companies or search templates without editing any Python code!
 - **🏢 Custom Domain Fallback**: Specify any domain (e.g. `acme-corp.com`) to use for companies not in the registry.
 
 ### 2. Corporate Email Pattern Formula

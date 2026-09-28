@@ -28,3 +28,11 @@ GoogleScraperAuthProfile/
 # OS
 .DS_Store
 Thumbs.db
+
+# Databases & Caches
+*.db
+*.sqlite
+*.sqlite3
+db/*.db
+db/*.db-wal
+db/*.db-shm

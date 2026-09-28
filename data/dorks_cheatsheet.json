@@ -1,0 +1,45 @@
+{
+  "basic_operators": [
+    ["site:", "Restricts search results to a specific domain or TLD.", "site:linkedin.com/in/ \"London Fire\""],
+    ["intext:", "Finds pages where the exact word/phrase appears in the body text.", "intext:\"commercial recycling facility\""],
+    ["intitle:", "Finds pages where the exact word appears in the HTML title.", "intitle:\"Chief Information Officer\""],
+    ["inurl:", "Finds pages where the keyword exists in the URL path.", "inurl:waste-carriers"],
+    ["filetype:", "Restricts results to specific file formats (pdf, xlsx, docx, csv, config).", "filetype:pdf \"Fire Strategy\""],
+    ["OR / |", "Searches for either term (must be uppercase OR or pipe |).", "\"Head of IT\" OR \"Director of ICT\""],
+    ["\"...\"", "Exact phrase matching; searches for words in that precise order.", "\"National Highways\""],
+    ["- (Minus)", "Excludes words or domains from results.", "-council -civic -household -tip -hwrc"],
+    ["..", "Number range search (e.g. prices, dates, or permit IDs).", "budget 2022..2025"],
+    ["after: / before:", "Filters results published after or before a specific date.", "tutorial python after:2023"]
+  ],
+  "dev_dorks": [
+    ["Finding Code Solutions", "site:stackoverflow.com OR site:github.com \"specific error message\"", "Finds solutions across StackOverflow and GitHub repos."],
+    ["Official Tech Documentation", "site:docs.microsoft.com OR site:developer.mozilla.org javascript", "Finds official API docs without SEO spam blogs."],
+    ["Finding Recent Tutorials", "intitle:tutorial (react OR vue) after:2023", "Discovers modern, up-to-date framework tutorials."],
+    ["GitHub Repository Code Search", "site:github.com repo:facebook/react hooks", "Searches within a specific organization/repo on GitHub."],
+    ["Error Message Debugger", "error:\"npm ERR!\" OR error:\"TypeError:\"", "Finds exact stacktraces and resolution threads."]
+  ],
+  "security_dorks": [
+    ["Open Directory Browsing", "intext:\"index of /\" -inurl:(jsp|php|html|aspx|htm)", "Locates open file directory server indexes."],
+    ["Exposed Server Configs", "inurl:web.config inurl:ftp", "Discovers exposed server configuration and FTP connection files."],
+    ["Public Environment & API Keys", "filetype:env \"DB_PASSWORD\" OR \"API_KEY\"", "Finds accidentally exposed .env and configuration files."],
+    ["Exposed Database Dumps", "filetype:sql \"INSERT INTO\" OR \"CREATE TABLE\"", "Finds exposed database backups and SQL schema files."],
+    ["Confidential Internal Documents", "(intext:\"confidential salary\" OR intext:\"budget approved\") inurl:confidential filetype:pdf", "Locates confidential corporate salary and budget memos."]
+  ],
+  "lead_gen_dorks": [
+    ["LinkedIn Profile Extractor", "site:linkedin.com/in/ \"Fire and Rescue\" (\"Head of IT\" OR \"ICT Manager\") \"United Kingdom\" -jobs -recruiter", "Extracts targeted leadership profiles on LinkedIn."],
+    ["Public Email Hunter", "\"London Fire Brigade\" \"Head of IT\" (@gmail.com OR @outlook.com OR @yahoo.com)", "Finds public contact emails listed in forum posts and profiles."],
+    ["Corporate Contact Lists", "site:gov.uk (filetype:xlsx OR filetype:csv) \"contact list\" OR \"directory\"", "Discovers official public sector and government contact spreadsheets."],
+    ["Executive Resumes & CVs", "(\"Head of IT\" OR \"CTO\") \"curriculum vitae\" OR \"resume\" filetype:pdf \"United Kingdom\"", "Finds direct PDF resumes of senior technical leaders."]
+  ],
+  "env_registers": [
+    ["EA: Waste Operations (England)", "site:environment.data.gov.uk/public-register/ (\"Environmental Permitting Regulations – Waste Operations\" OR \"Materials recovery\" OR \"Waste transfer\") -council -civic -household -tip -hwrc", "Searches permitted waste operations across England."],
+    ["EA: Waste Carriers & Brokers", "site:environment.data.gov.uk/public-register/ \"Register of Waste Carriers, Brokers and Dealers\" (\"Carrier and Broker\" OR \"Dealer\") (\"Limited\" OR \"Ltd\" OR \"PLC\") -council -individual", "Finds registered commercial waste carriers and brokers."],
+    ["SEPA: Waste Authorisations (Scotland)", "site:sepa.org.uk (\"Register of Waste Carriers\" OR \"authorisations\" OR \"waste transfer\" OR \"materials recovery\") (\"Limited\" OR \"Ltd\" OR \"PLC\") -council", "Finds Scottish environmental authorisations and carriers."],
+    ["NRW: Waste Permitting (Wales)", "site:naturalresources.wales (\"waste permitting\" OR \"waste carriers, brokers and dealers\" OR \"waste transfer\") (\"Limited\" OR \"Ltd\" OR \"PLC\") -council -cyngor", "Finds Welsh permitted waste operations and carriers."]
+  ],
+  "transport_highways": [
+    ["National Highways Leadership", "site:linkedin.com/in/ (\"National Highways\" OR \"Highways England\" OR \"Highways Agency\") (\"Project Director\" OR \"Programme Director\" OR \"Head of\" OR \"Commercial Director\" OR \"Operations Manager\" OR \"Head of IT\" OR \"Procurement\") \"United Kingdom\" -jobs -recruiter -recruiting -careers", "Finds decision-makers and project directors across National Highways."],
+    ["National Highways Schemes & Tenders", "site:nationalhighways.co.uk (\"procurement\" OR \"framework contracts\" OR \"commercial\" OR \"schemes\" OR \"consultation\") (\"Director\" OR \"Head of\" OR \"Project Manager\" OR \"Commercial Manager\" OR \"Contact\") -careers -vacancies", "Searches official schemes, tenders, and framework contacts."],
+    ["Road Network & Regional Depots", "(\"National Highways\" OR \"Highways England\" OR \"Strategic Road Network\" OR \"major road network\" OR \"highways contractor\") (\"regional operations centre\" OR \"maintenance depot\" OR \"outstation\" OR \"framework supplier\" OR \"head office\") (\"United Kingdom\" OR \"UK\" OR \"England\" OR \"Scotland\" OR \"Wales\") -council -household -tip -hwrc -vacancies -careers", "Discovers outstations, regional control centres, and maintenance contractors."]
+  ]
+}

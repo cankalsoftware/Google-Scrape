@@ -161,11 +161,12 @@ def resolve_organization_domain(org_text: str, headline: str = "", snippet: str 
     clean_org = clean_org_text(org_text)
     combined = clean_org_text(f"{org_text} {headline} {snippet}")
     
-    # 1. Check primary industry lookup dictionary
+    # 1. Check primary industry lookup dictionary (with exact match and whole-word regex matching)
     if clean_org in lookup_dict:
         return lookup_dict[clean_org]
     for key, dom in sorted(lookup_dict.items(), key=lambda x: len(x[0]), reverse=True):
-        if key in clean_org or key in combined:
+        pattern = rf'(?:^|[\s,.\-–—/])' + re.escape(key) + r'(?:$|[\s,.\-–—/])'
+        if re.search(pattern, clean_org, re.IGNORECASE) or re.search(pattern, combined, re.IGNORECASE):
             return dom
             
     # 2. Check all sectors lookup dictionary as fallback
@@ -173,14 +174,15 @@ def resolve_organization_domain(org_text: str, headline: str = "", snippet: str 
     if clean_org in all_dict:
         return all_dict[clean_org]
     for key, dom in sorted(all_dict.items(), key=lambda x: len(x[0]), reverse=True):
-        if key in clean_org or key in combined:
+        pattern = rf'(?:^|[\s,.\-–—/])' + re.escape(key) + r'(?:$|[\s,.\-–—/])'
+        if re.search(pattern, clean_org, re.IGNORECASE) or re.search(pattern, combined, re.IGNORECASE):
             return dom
             
-    # 3. Check if any .gov.uk or .nhs.uk or .org.uk domain is mentioned directly in snippet
-    domain_match = re.search(r'([a-zA-Z0-9.-]+\.(?:gov\.uk|nhs\.uk|police\.uk|org\.uk|ac\.uk|net|org|com))', f"{org_text} {snippet}")
+    # 3. Check if any .gov.uk or .nhs.uk or .police.uk domain is mentioned directly in snippet
+    domain_match = re.search(r'\b([a-zA-Z0-9.-]+\.(?:gov\.uk|nhs\.uk|police\.uk|org\.uk|ac\.uk))\b', f"{org_text} {snippet}")
     if domain_match:
         extracted_dom = domain_match.group(1).lower()
-        if not extracted_dom.startswith("linkedin.") and not extracted_dom.startswith("google."):
+        if not any(se in extracted_dom for se in ["linkedin.", "google.", "bing.", "duckduckgo.", "brave.", "yahoo.", "yandex."]):
             return extracted_dom
             
     return ""
@@ -243,18 +245,131 @@ def verify_domain_mx(domain: str):
 
 
 
+def scrape_website_contacts(url: str, timeout: int = 8) -> dict:
+    """
+    Visits a company/facility website (and common contact/about pages)
+    to discover live corporate contact emails, telephone numbers, and site contact info.
+    """
+    if not url or not (url.startswith("http://") or url.startswith("https://")):
+        return {"emails": [], "phones": [], "primary_email": "", "primary_phone": ""}
+        
+    emails = []
+    phones = []
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-GB,en;q=0.9"
+    }
+    
+    try:
+        parsed_url = urllib.parse.urlparse(url)
+        base_domain = re.sub(r'^www\.', '', parsed_url.netloc.lower())
+        base_origin = f"{parsed_url.scheme}://{parsed_url.netloc}"
+        
+        visited = set()
+        pages_to_check = [url]
+        
+        for p in ["/contact", "/contact-us", "/contactus", "/about", "/about-us", "/locations", "/get-in-touch"]:
+            pages_to_check.append(urllib.parse.urljoin(base_origin, p))
+            
+        checked_count = 0
+        for target_page in pages_to_check:
+            if target_page in visited or checked_count >= 3:
+                continue
+            visited.add(target_page)
+            checked_count += 1
+            
+            try:
+                resp = requests.get(target_page, headers=headers, timeout=timeout, allow_redirects=True)
+                if resp.status_code == 200 and "text/html" in resp.headers.get("Content-Type", ""):
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    
+                    # 1. Parse mailto & tel hyperlinks
+                    for a in soup.find_all("a", href=True):
+                        href_val = a["href"].strip()
+                        if href_val.lower().startswith("mailto:"):
+                            raw_mail = href_val.split("mailto:")[1].split("?")[0].strip().lower()
+                            if EMAIL_PATTERN.match(raw_mail) and not any(junk in raw_mail for junk in ["example.com", "domain.com", "wixpress.com", "sentry.io", "wordpress.org"]):
+                                emails.append(raw_mail)
+                        elif href_val.lower().startswith("tel:"):
+                            raw_tel = href_val.split("tel:")[1].split("?")[0].strip()
+                            clean_tel = re.sub(r'[^\d+\s()\-]', '', raw_tel).strip()
+                            if len(re.sub(r'\D', '', clean_tel)) >= 7:
+                                phones.append(clean_tel)
+                                
+                    # 2. Text regex scan
+                    page_text = soup.get_text(separator=" ")
+                    found_emails = EMAIL_PATTERN.findall(page_text)
+                    for em in found_emails:
+                        em_clean = em.strip().lower()
+                        if not any(junk in em_clean for junk in ["example.com", "domain.com", "wixpress.com", "sentry.io", "wordpress.org", "schema.org"]):
+                            emails.append(em_clean)
+                            
+                    found_phones = PHONE_PATTERN.findall(page_text)
+                    for ph in found_phones:
+                        ph_clean = ph.strip()
+                        if len(re.sub(r'\D', '', ph_clean)) >= 7:
+                            phones.append(ph_clean)
+                            
+                    # 3. If homepage, discover on-page contact links
+                    if checked_count == 1:
+                        for a in soup.find_all("a", href=True):
+                            a_href = a["href"].strip()
+                            a_text = a.get_text(strip=True).lower()
+                            if any(k in a_text or k in a_href.lower() for k in ["contact", "get in touch", "locations", "about us", "depots"]):
+                                full_link = urllib.parse.urljoin(target_page, a_href)
+                                if urllib.parse.urlparse(full_link).netloc.lower() == parsed_url.netloc.lower():
+                                    if full_link not in visited and full_link not in pages_to_check:
+                                        pages_to_check.insert(checked_count, full_link)
+            except Exception:
+                continue
+                
+            domain_specific_emails = [e for e in emails if base_domain in e]
+            if domain_specific_emails and phones:
+                break
+    except Exception:
+        pass
+        
+    unique_emails = list(dict.fromkeys(emails))
+    unique_phones = list(dict.fromkeys(phones))
+    
+    if base_domain:
+        matched = [e for e in unique_emails if base_domain in e]
+        other = [e for e in unique_emails if base_domain not in e]
+        unique_emails = matched + other
+        
+    primary_email = unique_emails[0] if unique_emails else ""
+    primary_phone = unique_phones[0] if unique_phones else ""
+    
+    return {
+        "emails": unique_emails,
+        "phones": unique_phones,
+        "primary_email": primary_email,
+        "primary_phone": primary_phone
+    }
+
+
 def synthesize_email(first_name: str, last_name: str, domain: str, pattern: str = "{first}.{last}@{domain}") -> str:
     """
     Synthesizes corporate/public sector email based on naming pattern formula.
     """
-    if not first_name or not last_name or not domain:
+    if not domain:
         return ""
-        
-    f_clean = re.sub(r'[^a-zA-Z0-9]', '', first_name.lower())
-    l_clean = re.sub(r'[^a-zA-Z0-9]', '', last_name.lower())
+    domain = domain.lower().strip()
     
-    if not f_clean or not l_clean:
-        return ""
+    if not first_name and not last_name:
+        return f"info@{domain}"
+        
+    f_clean = re.sub(r'[^a-zA-Z0-9]', '', (first_name or "").lower())
+    l_clean = re.sub(r'[^a-zA-Z0-9]', '', (last_name or "").lower())
+    
+    if not f_clean and not l_clean:
+        return f"info@{domain}"
+    if not f_clean:
+        return f"{l_clean}@{domain}"
+    if not l_clean:
+        return f"{f_clean}@{domain}"
         
     f_initial = f_clean[0]
     l_initial = l_clean[0]
@@ -265,11 +380,11 @@ def synthesize_email(first_name: str, last_name: str, domain: str, pattern: str 
             last=l_clean,
             f=f_initial,
             l=l_initial,
-            domain=domain.lower()
+            domain=domain
         )
         return formatted
     except Exception:
-        return f"{f_clean}.{l_clean}@{domain.lower()}"
+        return f"{f_clean}.{l_clean}@{domain}"
 
 
 def api_enrich_lead(lead_dict: dict, provider: str = "builtin", api_key: str = "", pattern: str = "{first}.{last}@{domain}", industry: str = "fire", custom_domain: str = "") -> dict:
@@ -280,6 +395,7 @@ def api_enrich_lead(lead_dict: dict, provider: str = "builtin", api_key: str = "
     headline = lead_dict.get("Headline / Role", "")
     org = lead_dict.get("Organisation", "")
     snippet = lead_dict.get("Snippet", "")
+    url = lead_dict.get("URL", "")
     
     first_name, last_name, display_name = parse_lead_name(full_name)
     if not first_name and lead_dict.get("First Name"):
@@ -287,13 +403,27 @@ def api_enrich_lead(lead_dict: dict, provider: str = "builtin", api_key: str = "
     if not last_name and lead_dict.get("Last Name"):
         last_name = lead_dict.get("Last Name")
         
-    domain = lead_dict.get("Domain") or resolve_organization_domain(org, headline, snippet, industry, custom_domain)
+    # Domain resolution prioritization
+    domain = lead_dict.get("Domain", "")
+    if not domain and url:
+        try:
+            parsed_netloc = urllib.parse.urlparse(url).netloc.lower()
+            clean_netloc = re.sub(r'^www\.', '', parsed_netloc)
+            non_corporate = ['google.', 'bing.', 'duckduckgo.', 'brave.', 'yahoo.', 'yandex.', 'ahmia.', 'linkedin.', 'youtube.', 'facebook.', 'twitter.', 'x.com', 'instagram.', 'wikipedia.']
+            if clean_netloc and not any(se in clean_netloc for se in non_corporate):
+                domain = clean_netloc
+        except Exception:
+            pass
+    if not domain:
+        domain = resolve_organization_domain(org, headline, snippet, industry, custom_domain)
+        
+    raw_email = lead_dict.get("Email", "")
     
     # 1. External API: Hunter.io
-    if provider == "hunter" and api_key and domain and first_name and last_name:
+    if provider == "hunter" and api_key and domain and (first_name or last_name):
         try:
-            url = f"https://api.hunter.io/v2/email-finder?domain={domain}&first_name={first_name}&last_name={last_name}&api_key={api_key}"
-            resp = requests.get(url, timeout=10)
+            url_h = f"https://api.hunter.io/v2/email-finder?domain={domain}&first_name={first_name}&last_name={last_name}&api_key={api_key}"
+            resp = requests.get(url_h, timeout=10)
             if resp.status_code == 200:
                 data = resp.json().get("data", {})
                 email = data.get("email", "")
@@ -316,9 +446,9 @@ def api_enrich_lead(lead_dict: dict, provider: str = "builtin", api_key: str = "
     # 2. External API: Apollo.io
     if provider == "apollo" and api_key and domain and (first_name or last_name):
         try:
-            url = "https://api.apollo.io/v1/people/match"
+            url_a = "https://api.apollo.io/v1/people/match"
             payload = {"api_key": api_key, "first_name": first_name, "last_name": last_name, "domain": domain}
-            resp = requests.post(url, json=payload, timeout=10)
+            resp = requests.post(url_a, json=payload, timeout=10)
             if resp.status_code == 200:
                 person = resp.json().get("person", {})
                 email = person.get("email", "")
@@ -339,14 +469,22 @@ def api_enrich_lead(lead_dict: dict, provider: str = "builtin", api_key: str = "
     # 3. Built-in MX & Pattern Engine (Default - Instant, Free, Reliable)
     if domain:
         is_mx_valid, mx_status, mx_servers = verify_domain_mx(domain)
-        email = synthesize_email(first_name, last_name, domain, pattern)
-        
-        if is_mx_valid:
-            badge = "🟢 Valid (MX)"
-            deliverability = "Valid (MX Verified)"
+        if raw_email:
+            email = raw_email
+            deliverability = "Valid (Scraped)"
+            badge = "🟢 Scraped"
         else:
-            badge = "🔴 No MX"
-            deliverability = "Invalid (No MX)"
+            if first_name and last_name:
+                email = synthesize_email(first_name, last_name, domain, pattern)
+            else:
+                email = f"info@{domain.lower()}"
+                
+            if is_mx_valid:
+                badge = "🟢 Valid (MX)"
+                deliverability = "Valid (MX Verified)"
+            else:
+                badge = "🔴 No MX"
+                deliverability = "Invalid (No MX)"
             
         mx_host = mx_servers[0] if mx_servers else "None"
         return {
@@ -364,9 +502,9 @@ def api_enrich_lead(lead_dict: dict, provider: str = "builtin", api_key: str = "
             "First Name": first_name,
             "Last Name": last_name,
             "Domain": "",
-            "Enriched Email": "",
-            "Deliverability": "Not Found (Unknown Domain)",
-            "Deliverability Badge": "⚪ Not Found",
+            "Enriched Email": raw_email,
+            "Deliverability": "Not Found (Unknown Domain)" if not raw_email else "Valid (Scraped)",
+            "Deliverability Badge": "⚪ Not Found" if not raw_email else "🟢 Scraped",
             "MX Server": "None",
             "Score": 0
         }
@@ -824,18 +962,62 @@ def sanitize_search_query(query: str) -> str:
     return q
 
 
+def make_combobox_adaptive(combo: ttk.Combobox):
+    """
+    Dynamically expands the popdown dropdown listbox width of a ttk.Combobox so that
+    long options, presets, queries, and descriptions are 100% visible without text truncation.
+    """
+    def _adjust(event=None):
+        try:
+            vals = combo['values']
+            if not vals:
+                return
+            max_len = max(len(str(v)) for v in vals)
+            target_char_w = max(int(combo.cget("width")), max_len + 4)
+            popdown_path = combo.tk.eval(f"ttk::combobox::PopdownWindow {combo}")
+            listbox_path = f"{popdown_path}.f.l"
+            combo.tk.call(listbox_path, "configure", "-width", target_char_w)
+        except Exception:
+            pass
+
+    combo.bind("<ButtonPress-1>", _adjust, add="+")
+    combo.bind("<Down>", _adjust, add="+")
+    combo.bind("<Key-F4>", _adjust, add="+")
+    
+    try:
+        existing_post = combo.cget("postcommand")
+        if existing_post:
+            def _chained():
+                _adjust()
+                if callable(existing_post):
+                    existing_post()
+                elif isinstance(existing_post, str) and existing_post:
+                    combo.tk.eval(existing_post)
+            combo.configure(postcommand=_chained)
+        else:
+            combo.configure(postcommand=_adjust)
+    except Exception:
+        pass
+        
+    return combo
+
+
 class ToolTip:
-    """Hover tooltip helper for Tkinter widgets."""
-    def __init__(self, widget, text, delay=250):
+    """
+    Modern, adaptable, screen-boundary-aware hover tooltip helper for Tkinter widgets.
+    Dynamically calculates wraplength and clamps/inverts coordinates so text is never cut off.
+    """
+    def __init__(self, widget, text, delay=220):
         self.widget = widget
         self.text = text
         self.delay = delay
         self.tip_window = None
         self.schedule_id = None
         
-        self.widget.bind("<Enter>", self._on_enter)
-        self.widget.bind("<Leave>", self._on_leave)
-        self.widget.bind("<ButtonPress>", self._on_leave)
+        self.widget.bind("<Enter>", self._on_enter, add="+")
+        self.widget.bind("<Leave>", self._on_leave, add="+")
+        self.widget.bind("<ButtonPress>", self._on_leave, add="+")
+        self.widget.bind("<Destroy>", self._on_leave, add="+")
 
     def _on_enter(self, event=None):
         self._cancel_schedule()
@@ -847,41 +1029,201 @@ class ToolTip:
 
     def _cancel_schedule(self):
         if self.schedule_id:
-            self.widget.after_cancel(self.schedule_id)
+            try:
+                self.widget.after_cancel(self.schedule_id)
+            except Exception:
+                pass
             self.schedule_id = None
 
     def _show_tip(self):
         if self.tip_window or not self.text:
             return
-        x = self.widget.winfo_rootx() + 15
-        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
-        
-        self.tip_window = tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True)
-        tw.wm_geometry(f"+{x}+{y}")
-        tw.attributes("-topmost", True)
-        
-        frame = tk.Frame(tw, background="#0F172A", borderwidth=1, relief=tk.SOLID)
-        frame.pack()
-        
-        label = tk.Label(
-            frame,
-            text=self.text,
-            justify=tk.LEFT,
-            background="#0F172A",
-            foreground="#F8FAFC",
-            font=("Segoe UI", 8),
-            padx=8,
-            pady=5,
-            wraplength=380
-        )
-        label.pack()
+        tip_text = self.text() if callable(self.text) else str(self.text)
+        if not tip_text.strip():
+            return
+            
+        try:
+            self.tip_window = tw = tk.Toplevel(self.widget)
+            tw.wm_overrideredirect(True)
+            tw.attributes("-topmost", True)
+            try:
+                tw.attributes("-alpha", 0.98)
+            except Exception:
+                pass
+            
+            # High-contrast slate card with subtle border
+            border_frame = tk.Frame(tw, background="#334155", borderwidth=1, relief=tk.SOLID)
+            border_frame.pack(fill=tk.BOTH, expand=True)
+            
+            screen_w = tw.winfo_screenwidth()
+            screen_h = tw.winfo_screenheight()
+            
+            t_len = len(tip_text)
+            if t_len < 60:
+                wrap_w = 300
+            elif t_len < 160:
+                wrap_w = 400
+            elif t_len < 350:
+                wrap_w = 520
+            else:
+                wrap_w = min(620, max(380, screen_w - 80))
+                
+            lbl = tk.Label(
+                border_frame,
+                text=tip_text,
+                justify=tk.LEFT,
+                background="#0F172A",
+                foreground="#F8FAFC",
+                font=("Segoe UI", 9),
+                padx=10,
+                pady=6,
+                wraplength=wrap_w
+            )
+            lbl.pack(fill=tk.BOTH, expand=True)
+            
+            tw.update_idletasks()
+            req_w = tw.winfo_reqwidth()
+            req_h = tw.winfo_reqheight()
+            
+            # Position relative to target widget
+            x = self.widget.winfo_rootx() + 10
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+            
+            # Screen horizontal boundary clamping
+            if x + req_w > screen_w - 12:
+                x = max(10, screen_w - req_w - 12)
+            if x < 10:
+                x = 10
+                
+            # Screen vertical boundary clamping & inversion (flip above widget if near bottom)
+            if y + req_h > screen_h - 40:
+                y = max(10, self.widget.winfo_rooty() - req_h - 6)
+            if y < 10:
+                y = 10
+                
+            tw.wm_geometry(f"{req_w}x{req_h}+{int(x)}+{int(y)}")
+            tw.lift()
+        except Exception:
+            self._hide_tip()
 
     def _hide_tip(self):
         tw = self.tip_window
         self.tip_window = None
         if tw:
-            tw.destroy()
+            try:
+                tw.destroy()
+            except Exception:
+                pass
+
+
+class TreeviewHoverToolTip:
+    """
+    Displays an adaptive tooltip preview for Treeview rows on mouse hover
+    to reveal full, untruncated content, emails, phone numbers, and status logs.
+    """
+    def __init__(self, tree, get_tooltip_text_fn, delay=350):
+        self.tree = tree
+        self.get_text_fn = get_tooltip_text_fn
+        self.delay = delay
+        self.tip_window = None
+        self.schedule_id = None
+        self.last_item = None
+        
+        self.tree.bind("<Motion>", self._on_motion, add="+")
+        self.tree.bind("<Leave>", self._on_leave, add="+")
+        self.tree.bind("<ButtonPress>", self._on_leave, add="+")
+        self.tree.bind("<MouseWheel>", self._on_leave, add="+")
+
+    def _on_motion(self, event):
+        item = self.tree.identify_row(event.y)
+        if not item or item != self.last_item:
+            self._cancel_schedule()
+            self._hide_tip()
+            self.last_item = item
+            if item:
+                self.schedule_id = self.tree.after(self.delay, lambda: self._show_tip(item, event.x_root, event.y_root))
+
+    def _on_leave(self, event=None):
+        self._cancel_schedule()
+        self._hide_tip()
+        self.last_item = None
+
+    def _cancel_schedule(self):
+        if self.schedule_id:
+            try:
+                self.tree.after_cancel(self.schedule_id)
+            except Exception:
+                pass
+            self.schedule_id = None
+
+    def _show_tip(self, item, mouse_x, mouse_y):
+        if self.tip_window or not item:
+            return
+        tip_text = self.get_text_fn(item)
+        if not tip_text or not str(tip_text).strip():
+            return
+            
+        try:
+            tw = tk.Toplevel(self.tree)
+            self.tip_window = tw
+            tw.wm_overrideredirect(True)
+            tw.attributes("-topmost", True)
+            try:
+                tw.attributes("-alpha", 0.98)
+            except Exception:
+                pass
+                
+            border = tk.Frame(tw, background="#334155", borderwidth=1, relief=tk.SOLID)
+            border.pack(fill=tk.BOTH, expand=True)
+            
+            screen_w = tw.winfo_screenwidth()
+            screen_h = tw.winfo_screenheight()
+            
+            wrap_w = min(580, max(360, screen_w - 80))
+            lbl = tk.Label(
+                border,
+                text=str(tip_text).strip(),
+                justify=tk.LEFT,
+                background="#0F172A",
+                foreground="#F8FAFC",
+                font=("Segoe UI", 9),
+                padx=10,
+                pady=7,
+                wraplength=wrap_w
+            )
+            lbl.pack(fill=tk.BOTH, expand=True)
+            
+            tw.update_idletasks()
+            req_w = tw.winfo_reqwidth()
+            req_h = tw.winfo_reqheight()
+            
+            x = mouse_x + 14
+            y = mouse_y + 16
+            
+            if x + req_w > screen_w - 12:
+                x = max(10, screen_w - req_w - 12)
+            if x < 10:
+                x = 10
+                
+            if y + req_h > screen_h - 40:
+                y = max(10, mouse_y - req_h - 10)
+            if y < 10:
+                y = 10
+                
+            tw.wm_geometry(f"{req_w}x{req_h}+{int(x)}+{int(y)}")
+            tw.lift()
+        except Exception:
+            self._hide_tip()
+
+    def _hide_tip(self):
+        tw = self.tip_window
+        self.tip_window = None
+        if tw:
+            try:
+                tw.destroy()
+            except Exception:
+                pass
+
 
 
 class GoogleLeadScraperSuite(tk.Tk):
@@ -964,6 +1306,24 @@ class GoogleLeadScraperSuite(tk.Tk):
 
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
         
+        # Global auto-adapt hooks for all Combobox dropdown lists across the app
+        def _global_combobox_adapt_hook(event):
+            try:
+                w = event.widget
+                vals = w['values']
+                if vals:
+                    max_len = max(len(str(v)) for v in vals)
+                    target_w = max(int(w.cget('width')), max_len + 4)
+                    popdown = w.tk.eval(f"ttk::combobox::PopdownWindow {w}")
+                    listbox = f"{popdown}.f.l"
+                    w.tk.call(listbox, "configure", "-width", target_w)
+            except Exception:
+                pass
+
+        self.bind_class("TCombobox", "<ButtonPress-1>", _global_combobox_adapt_hook, add="+")
+        self.bind_class("TCombobox", "<Down>", _global_combobox_adapt_hook, add="+")
+        self.bind_class("TCombobox", "<Key-F4>", _global_combobox_adapt_hook, add="+")
+        
         self._setup_styles()
         self._build_ui()
         self._reset_builder()  # Start with completely clean/empty textboxes (no hardcoded defaults)
@@ -974,7 +1334,7 @@ class GoogleLeadScraperSuite(tk.Tk):
         if "clam" in self.style.theme_names():
             self.style.theme_use("clam")
             
-        # Base colors
+        # Base colors & Widget Font Options
         self.style.configure("TFrame", background="#F1F5F9")
         self.style.configure("TLabelframe", background="#F1F5F9")
         self.style.configure("TLabelframe.Label", background="#F1F5F9", foreground="#0F172A", font=("Segoe UI", 10, "bold"))
@@ -982,6 +1342,15 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.style.configure("TCheckbutton", background="#F1F5F9", foreground="#1E293B", font=("Segoe UI", 9))
         self.style.configure("TRadiobutton", background="#F1F5F9", foreground="#1E293B", font=("Segoe UI", 9))
         self.style.configure("TCombobox", font=("Segoe UI", 9))
+        
+        # Option Database settings to ensure Combobox Popdown listboxes are styled and fully readable
+        self.option_add("*TCombobox*Listbox.font", ("Segoe UI", 9))
+        self.option_add("*ComboboxPopdown*Listbox.font", ("Segoe UI", 9))
+        self.option_add("*TCombobox*Listbox.selectBackground", "#3B82F6")
+        self.option_add("*TCombobox*Listbox.selectForeground", "#FFFFFF")
+        self.option_add("*ComboboxPopdown*Listbox.selectBackground", "#3B82F6")
+        self.option_add("*ComboboxPopdown*Listbox.selectForeground", "#FFFFFF")
+
         
         # Main Notebook (Tabs)
         self.style.configure("TNotebook", background="#E2E8F0", borderwidth=0)
@@ -1891,7 +2260,11 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.batch_enrich_btn.pack(side=tk.LEFT, padx=(0, 6))
         ToolTip(self.batch_enrich_btn, "Automatically resolves official domains, synthesizes work emails, and checks DNS MX deliverability for ALL contacts in list.")
         
-        self.single_enrich_btn = ttk.Button(enrich_bar, text="⚡ Enrich Selected", style="Accent.TButton", command=self._enrich_selected_lead)
+        self.scrape_sites_btn = ttk.Button(enrich_bar, text="🌐 Scrape Site Contacts", style="Accent.TButton", command=self._start_batch_site_scrape)
+        self.scrape_sites_btn.pack(side=tk.LEFT, padx=(0, 6))
+        ToolTip(self.scrape_sites_btn, "Visits the company websites / contact pages of all leads to discover live contact emails, phone numbers, and site personnel.")
+        
+        self.single_enrich_btn = ttk.Button(enrich_bar, text="⚡ Enrich Selected", style="Secondary.TButton", command=self._enrich_selected_lead)
         self.single_enrich_btn.pack(side=tk.LEFT, padx=(0, 6))
         ToolTip(self.single_enrich_btn, "Enriches email & verifies MX deliverability for all selected rows (Hold Ctrl or Shift to select multiple lines).")
         
@@ -1913,14 +2286,15 @@ class GoogleLeadScraperSuite(tk.Tk):
         # A. Interactive Table View (ttk.Treeview)
         self.tree_frame = ttk.Frame(self.view_container)
         
-        tree_cols = ("#", "first_name", "last_name", "role", "org", "email", "status", "domain", "url")
+        tree_cols = ("#", "first_name", "last_name", "role", "org", "email", "phone", "status", "domain", "url")
         self.col_titles = {
             "#": "#",
             "first_name": "First Name",
             "last_name": "Surname",
             "role": "Job Role / Title",
             "org": "Organisation / Service",
-            "email": "Enriched Email",
+            "email": "Email / Contact",
+            "phone": "Phone / Tel",
             "status": "Deliverability",
             "domain": "Resolved Domain",
             "url": "Source URL"
@@ -1931,15 +2305,16 @@ class GoogleLeadScraperSuite(tk.Tk):
         for col in tree_cols:
             self.tree.heading(col, text=self.col_titles[col], command=lambda c=col: self._sort_by_column(c))
         
-        self.tree.column("#", width=42, minwidth=30, anchor="center")
-        self.tree.column("first_name", width=95, minwidth=75, anchor="w")
-        self.tree.column("last_name", width=105, minwidth=80, anchor="w")
-        self.tree.column("role", width=175, minwidth=120, anchor="w")
-        self.tree.column("org", width=185, minwidth=130, anchor="w")
-        self.tree.column("email", width=215, minwidth=150, anchor="w")
-        self.tree.column("status", width=135, minwidth=100, anchor="center")
-        self.tree.column("domain", width=145, minwidth=100, anchor="w")
-        self.tree.column("url", width=130, minwidth=90, anchor="w")
+        self.tree.column("#", width=38, minwidth=28, anchor="center")
+        self.tree.column("first_name", width=85, minwidth=65, anchor="w")
+        self.tree.column("last_name", width=95, minwidth=70, anchor="w")
+        self.tree.column("role", width=155, minwidth=100, anchor="w")
+        self.tree.column("org", width=170, minwidth=110, anchor="w")
+        self.tree.column("email", width=195, minwidth=135, anchor="w")
+        self.tree.column("phone", width=130, minwidth=90, anchor="w")
+        self.tree.column("status", width=125, minwidth=95, anchor="center")
+        self.tree.column("domain", width=135, minwidth=95, anchor="w")
+        self.tree.column("url", width=120, minwidth=85, anchor="w")
         
         tree_vsb = ttk.Scrollbar(self.tree_frame, orient="vertical", command=self.tree.yview)
         tree_hsb = ttk.Scrollbar(self.tree_frame, orient="horizontal", command=self.tree.xview)
@@ -1959,15 +2334,18 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.tree.tag_configure("invalid", background="#FEF2F2", foreground="#991B1B")
         
         self.tree.bind("<Double-1>", self._on_tree_double_click)
+        self.tree_hover_tip = TreeviewHoverToolTip(self.tree, self._get_leads_tree_row_tooltip)
         
         # Right-click context menu
         self.tree_menu = tk.Menu(self, tearoff=0)
         self.tree_menu.add_command(label="⚡ Enrich Selected Contact(s)", command=self._enrich_selected_lead)
+        self.tree_menu.add_command(label="🌐 Scrape Contacts from this Website", command=self._scrape_selected_site_contacts)
         self.tree_menu.add_command(label="🏢 Filter Table by this Organisation", command=self._filter_by_selected_org)
         self.tree_menu.add_separator()
         self.tree_menu.add_command(label="✉️ Copy Email", command=self._copy_selected_email)
+        self.tree_menu.add_command(label="📞 Copy Phone / Contact", command=self._copy_selected_phone)
         self.tree_menu.add_command(label="📋 Copy Row Details", command=self._copy_selected_row)
-        self.tree_menu.add_command(label="🌐 Open Profile URL in Browser", command=self._open_selected_url)
+        self.tree_menu.add_command(label="🌐 Open Profile / Website URL in Browser", command=self._open_selected_url)
         self.tree_menu.add_separator()
         self.tree_menu.add_command(label="🔄 Clear Filters / Show All", command=self._reset_results_filters)
         
@@ -2722,6 +3100,7 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.verifier_tree.tag_configure("invalid", background="#F8FAFC", foreground="#64748B")
         
         self.verifier_tree.bind("<Double-1>", self._on_verifier_row_double_click)
+        self.verifier_tree_hover_tip = TreeviewHoverToolTip(self.verifier_tree, self._get_verifier_tree_row_tooltip)
         
         # Right-click context menu
         self.v_tree_menu = tk.Menu(self, tearoff=0)
@@ -3998,6 +4377,7 @@ class GoogleLeadScraperSuite(tk.Tk):
         sb_y.pack(side=tk.RIGHT, fill=tk.Y)
         sb_x.pack(side=tk.BOTTOM, fill=tk.X)
         self.opendata_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.opendata_tree_hover_tip = TreeviewHoverToolTip(self.opendata_tree, self._get_opendata_tree_row_tooltip)
 
         # 5. Frame D: Action & Bridge Toolbar
         action_frame = ttk.Frame(self.tab_opendata)
@@ -5616,53 +5996,97 @@ class GoogleLeadScraperSuite(tk.Tk):
             emails = EMAIL_PATTERN.findall(combined_text)
             phones = PHONE_PATTERN.findall(combined_text)
             
-            clean_title = raw_title.replace(" | LinkedIn", "").replace(" - LinkedIn", "")
-            parts = [p.strip() for p in clean_title.split(" - ")]
-            name = parts[0] if len(parts) > 0 else clean_title
-            headline = parts[1] if len(parts) > 1 else ""
-            company = parts[2] if len(parts) > 2 else ""
+            # Check if this lead is a LinkedIn profile vs an Open-Web / Corporate / Facility result
+            is_linkedin = "linkedin.com/in/" in href or " - LinkedIn" in raw_title or " | LinkedIn" in raw_title
             
-            # Intelligent name entity parsing
-            first_name, last_name, display_name = parse_lead_name(name)
-            
-            # If company missing, attempt parsing from headline (e.g. "Head of IT at Greater Manchester Fire")
-            if not company and " at " in headline:
-                company = headline.split(" at ")[-1].strip()
-            elif not company and " @ " in headline:
-                company = headline.split(" @ ")[-1].strip()
-                
-            industry = self.enrich_industry_var.get() if hasattr(self, "enrich_industry_var") else "fire"
-            custom_dom = self.custom_email_domain_var.get() if hasattr(self, "custom_email_domain_var") else ""
-            resolved_dom = resolve_organization_domain(company, headline, snippet, industry, custom_dom)
-            
-            # If domain not matched via public sector registry, extract domain directly from destination URL
-            if not resolved_dom and href:
+            # 1. Extract destination URL domain
+            url_domain = ""
+            if href:
                 try:
                     parsed_netloc = urllib.parse.urlparse(href).netloc.lower()
                     clean_netloc = re.sub(r'^www\.', '', parsed_netloc)
-                    if clean_netloc and not any(se in clean_netloc for se in ['google.', 'bing.', 'duckduckgo.', 'brave.', 'yahoo.', 'yandex.', 'ahmia.', 'linkedin.']):
-                        resolved_dom = clean_netloc
+                    non_corporate = ['google.', 'bing.', 'duckduckgo.', 'brave.', 'yahoo.', 'yandex.', 'ahmia.', 'linkedin.', 'youtube.', 'facebook.', 'twitter.', 'x.com', 'instagram.', 'wikipedia.']
+                    if clean_netloc and not any(se in clean_netloc for se in non_corporate):
+                        url_domain = clean_netloc
                 except Exception:
                     pass
-
-            # If company missing on open-web results, extract from title or domain
-            if not company:
-                title_parts = [p.strip() for p in re.split(r'\s+[-|–—]\s+', clean_title) if p.strip()]
+            
+            clean_title = raw_title.replace(" | LinkedIn", "").replace(" - LinkedIn", "").strip()
+            
+            if is_linkedin:
+                # Standard LinkedIn person lead: Name - Role - Company
+                parts = [p.strip() for p in clean_title.split(" - ")]
+                name = parts[0] if len(parts) > 0 else clean_title
+                headline = parts[1] if len(parts) > 1 else ""
+                company = parts[2] if len(parts) > 2 else ""
+                
+                # If company missing, attempt parsing from headline (e.g. "Head of IT at Greater Manchester Fire")
+                if not company and " at " in headline:
+                    company = headline.split(" at ")[-1].strip()
+                elif not company and " @ " in headline:
+                    company = headline.split(" @ ")[-1].strip()
+                    
+                first_name, last_name, display_name = parse_lead_name(name)
+                
+                industry = self.enrich_industry_var.get() if hasattr(self, "enrich_industry_var") else "fire"
+                custom_dom = self.custom_email_domain_var.get() if hasattr(self, "custom_email_domain_var") else ""
+                resolved_dom = custom_dom.strip().lower().replace("@", "") if (custom_dom and custom_dom.strip()) else resolve_organization_domain(company, headline, snippet, industry)
+            else:
+                # Open-Web Corporate / Facility / Commercial Lead (e.g. Materials Recovery Facility, Depot, Plant, MM Group)
+                delims = [r'\s+[|]\s+', r'\s+[-–—]\s+', r'\s+::\s+', r'\s+:\s+']
+                title_parts = [clean_title]
+                for d in delims:
+                    if re.search(d, clean_title):
+                        title_parts = [p.strip() for p in re.split(d, clean_title) if p.strip()]
+                        break
+                        
+                dom_base = url_domain.split('.')[0].lower() if url_domain else ""
+                company = ""
+                headline = ""
+                
                 if len(title_parts) >= 2:
-                    company = title_parts[0]
-                    if not headline:
+                    last_part = title_parts[-1]
+                    first_part = title_parts[0]
+                    
+                    if dom_base and (dom_base in last_part.lower().replace(" ", "") or any(kw in last_part.lower() for kw in ["group", "ltd", "limited", "plc", "corp", "inc", "services", "recycling"])):
+                        company = last_part
+                        headline = " - ".join(title_parts[:-1])
+                    elif dom_base and (dom_base in first_part.lower().replace(" ", "") or any(kw in first_part.lower() for kw in ["group", "ltd", "limited", "plc", "corp", "inc", "services", "recycling"])):
+                        company = first_part
                         headline = " - ".join(title_parts[1:])
-                elif resolved_dom:
-                    dom_base = resolved_dom.split('.')[0].capitalize()
-                    if dom_base and len(dom_base) > 2:
-                        company = dom_base
+                    else:
+                        company = first_part if len(first_part) < len(last_part) else last_part
+                        headline = last_part if company == first_part else first_part
+                else:
+                    headline = title_parts[0]
+                    company = dom_base.capitalize() if dom_base else title_parts[0]
+                    
+                if not company and url_domain:
+                    company = dom_base.capitalize()
+                    
+                first_name = ""
+                last_name = ""
+                display_name = f"Site Contact ({company})" if company else "Site Contact / Commercial Enquiries"
+                
+                # Priority: If direct URL domain exists, that is the source domain!
+                custom_dom = self.custom_email_domain_var.get() if hasattr(self, "custom_email_domain_var") else ""
+                if custom_dom and custom_dom.strip():
+                    resolved_dom = custom_dom.strip().lower().replace("@", "")
+                elif url_domain:
+                    resolved_dom = url_domain
+                else:
+                    industry = self.enrich_industry_var.get() if hasattr(self, "enrich_industry_var") else "fire"
+                    resolved_dom = resolve_organization_domain(company, headline, snippet, industry)
 
             raw_email = ", ".join(list(dict.fromkeys(emails))) if emails else ""
             
             # Pre-synthesize email candidate if domain is resolved and no raw email was found
-            if not raw_email and resolved_dom and first_name and last_name:
+            if not raw_email and resolved_dom:
                 pat = self.enrich_pattern_var.get() if hasattr(self, "enrich_pattern_var") else "{first}.{last}@{domain}"
-                enriched_email = synthesize_email(first_name, last_name, resolved_dom, pat)
+                if first_name and last_name:
+                    enriched_email = synthesize_email(first_name, last_name, resolved_dom, pat)
+                else:
+                    enriched_email = f"info@{resolved_dom.lower()}"
                 deliv_status = "Pending Verification"
                 deliv_badge = "⚪ Pending"
             else:
@@ -5673,7 +6097,7 @@ class GoogleLeadScraperSuite(tk.Tk):
             normalized_leads.append({
                 "First Name": first_name,
                 "Last Name": last_name,
-                "Name": display_name or name,
+                "Name": display_name,
                 "Headline / Role": headline,
                 "Organisation": company,
                 "Domain": resolved_dom,
@@ -6104,6 +6528,8 @@ class GoogleLeadScraperSuite(tk.Tk):
                     return (item.get("Organisation") or "").lower()
                 elif self.sort_column == "email":
                     return (item.get("Enriched Email") or item.get("Email") or "").lower()
+                elif self.sort_column == "phone":
+                    return (item.get("Phone") or "").lower()
                 elif self.sort_column == "status":
                     return (item.get("Deliverability") or "").lower()
                 elif self.sort_column == "domain":
@@ -6230,7 +6656,31 @@ class GoogleLeadScraperSuite(tk.Tk):
             self.status_var.set(f"Copied {len(emails)} email address(es) to clipboard.")
             messagebox.showinfo("Copied Email", f"Copied {len(emails)} email address(es) to clipboard:\n\n" + "\n".join(emails[:10]))
         else:
-            messagebox.showinfo("No Email Found", "The selected contact(s) do not have an email address yet.\n\nTip: Click '⚡ Enrich Selected' to discover and verify their email.")
+            messagebox.showinfo("No Email Found", "The selected contact(s) do not have an email address yet.\n\nTip: Click '⚡ Enrich Selected' or '🌐 Scrape Site Contacts' to discover their contact details.")
+
+    def _copy_selected_phone(self):
+        """Copies phone numbers of selected table rows to clipboard."""
+        selected = self.tree.selection()
+        if not selected:
+            return
+        data = self._get_filtered_data()
+        phones = []
+        for item_id in selected:
+            try:
+                idx = int(item_id)
+                if 0 <= idx < len(data):
+                    p = data[idx].get("Phone")
+                    if p:
+                        phones.append(str(p).strip())
+            except Exception:
+                pass
+        if phones:
+            self.clipboard_clear()
+            self.clipboard_append(", ".join(phones))
+            self.status_var.set(f"Copied {len(phones)} phone number(s) to clipboard.")
+            messagebox.showinfo("Copied Phone", f"Copied {len(phones)} phone number(s) to clipboard:\n\n" + "\n".join(phones[:10]))
+        else:
+            messagebox.showinfo("No Phone Found", "The selected contact(s) do not have a phone number yet.\n\nTip: Click '🌐 Scrape Site Contacts' to extract phone numbers from the website.")
 
     def _copy_selected_row(self):
         """Copies full details of selected rows to clipboard."""
@@ -6245,7 +6695,8 @@ class GoogleLeadScraperSuite(tk.Tk):
                 if 0 <= idx < len(data):
                     r = data[idx]
                     email_val = r.get("Enriched Email") or r.get("Email", "-")
-                    lines.append(f"{r.get('First Name', '')} {r.get('Last Name', '')} | {r.get('Headline / Role', '')} | {r.get('Organisation', '')} | {email_val} | {r.get('Deliverability', '')} | {r.get('URL', '')}")
+                    phone_val = r.get("Phone", "-")
+                    lines.append(f"{r.get('First Name', '')} {r.get('Last Name', '')} | {r.get('Headline / Role', '')} | {r.get('Organisation', '')} | {email_val} | {phone_val} | {r.get('Deliverability', '')} | {r.get('URL', '')}")
             except Exception:
                 pass
         if lines:
@@ -6255,7 +6706,7 @@ class GoogleLeadScraperSuite(tk.Tk):
             messagebox.showinfo("Copied Details", f"Copied {len(lines)} row(s) to clipboard!")
 
     def _open_selected_url(self):
-        """Opens profile URL of selected contact in default web browser."""
+        """Opens profile or website URL of selected contact in default web browser."""
         selected = self.tree.selection()
         if not selected:
             return
@@ -6271,6 +6722,152 @@ class GoogleLeadScraperSuite(tk.Tk):
                         break
             except Exception:
                 pass
+
+    def _start_batch_site_scrape(self):
+        """Launches batch website contact extraction in a background worker thread."""
+        if self.is_enriching:
+            messagebox.showwarning("Busy", "Enrichment or site contact scraping is already in progress.")
+            return
+        if not self.results_data:
+            messagebox.showwarning("No Leads", "No contacts in list. Run a search query first to extract leads.")
+            return
+            
+        self.is_enriching = True
+        self.batch_enrich_btn.configure(state=tk.DISABLED)
+        if hasattr(self, "scrape_sites_btn"):
+            self.scrape_sites_btn.configure(state=tk.DISABLED)
+        self.single_enrich_btn.configure(state=tk.DISABLED)
+        self.status_var.set("🌐 Starting Deep Website Contact Scraping (Emails & Phone Numbers)...")
+        
+        threading.Thread(target=self._batch_site_scrape_worker, daemon=True).start()
+
+    def _batch_site_scrape_worker(self):
+        total = len(self.results_data)
+        found_emails_count = 0
+        found_phones_count = 0
+        
+        for idx, lead in enumerate(self.results_data, 1):
+            if not self.is_enriching:
+                break
+                
+            url = lead.get("URL", "")
+            org_name = lead.get("Organisation", "") or lead.get("Domain", "site")
+            self.after(0, self.status_var.set, f"🌐 Scraping contacts from website {idx} of {total}: {org_name}...")
+            
+            if url and (url.startswith("http://") or url.startswith("https://")) and "linkedin.com" not in url:
+                try:
+                    site_res = scrape_website_contacts(url, timeout=8)
+                    emails = site_res.get("emails", [])
+                    phones = site_res.get("phones", [])
+                    
+                    if emails:
+                        primary_em = emails[0]
+                        lead["Email"] = ", ".join(emails)
+                        lead["Enriched Email"] = primary_em
+                        lead["Deliverability"] = "Valid (Scraped from Site)"
+                        lead["Deliverability Badge"] = "🟢 Scraped"
+                        found_emails_count += 1
+                        
+                    if phones:
+                        lead["Phone"] = ", ".join(phones)
+                        found_phones_count += 1
+                except Exception:
+                    pass
+                    
+            if idx % 2 == 0 or idx == total:
+                self.after(0, self._refresh_text_display)
+                
+            time.sleep(0.05)
+            
+        self.is_enriching = False
+        self.after(0, self.batch_enrich_btn.configure, {"state": tk.NORMAL})
+        if hasattr(self, "scrape_sites_btn"):
+            self.after(0, self.scrape_sites_btn.configure, {"state": tk.NORMAL})
+        self.after(0, self.single_enrich_btn.configure, {"state": tk.NORMAL})
+        self.after(0, self._refresh_text_display)
+        self.after(0, self.status_var.set, f"✅ Website contact scraping complete! Found {found_emails_count} site emails, {found_phones_count} phone numbers.")
+        
+        self.after(0, messagebox.showinfo, "✅ Site Contact Scraping Complete",
+            f"🌐 Live Website Contact Extraction Complete!\n\n"
+            f"Total Sites Crawled: {total}\n"
+            f"✉️ Contact Emails Found: {found_emails_count}\n"
+            f"📞 Phone Numbers Found: {found_phones_count}\n\n"
+            f"Your contacts are updated in the table with direct site contact details.\n"
+            f"Click '💾 Export Enriched CSV' to export."
+        )
+
+    def _scrape_selected_site_contacts(self):
+        """Scrapes live website contacts for selected rows in the table."""
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showinfo("Select Row", "Please select one or more contacts in the table to scrape their website contacts.")
+            return
+            
+        data = self._get_filtered_data()
+        selected_leads = []
+        for item_id in selected:
+            try:
+                idx = int(item_id)
+                if 0 <= idx < len(data):
+                    selected_leads.append(data[idx])
+            except (ValueError, IndexError):
+                pass
+                
+        if not selected_leads:
+            return
+            
+        if self.is_enriching:
+            messagebox.showwarning("Busy", "Scraping or enrichment is already in progress.")
+            return
+            
+        self.is_enriching = True
+        self.batch_enrich_btn.configure(state=tk.DISABLED)
+        if hasattr(self, "scrape_sites_btn"):
+            self.scrape_sites_btn.configure(state=tk.DISABLED)
+        self.single_enrich_btn.configure(state=tk.DISABLED)
+        
+        def _worker():
+            total = len(selected_leads)
+            found_e = 0
+            found_p = 0
+            for idx, lead in enumerate(selected_leads, 1):
+                if not self.is_enriching:
+                    break
+                url = lead.get("URL", "")
+                self.after(0, self.status_var.set, f"🌐 Scraping contacts from {lead.get('Organisation', 'site')} ({idx}/{total})...")
+                if url and (url.startswith("http://") or url.startswith("https://")) and "linkedin.com" not in url:
+                    try:
+                        site_res = scrape_website_contacts(url, timeout=8)
+                        emails = site_res.get("emails", [])
+                        phones = site_res.get("phones", [])
+                        if emails:
+                            lead["Email"] = ", ".join(emails)
+                            lead["Enriched Email"] = emails[0]
+                            lead["Deliverability"] = "Valid (Scraped from Site)"
+                            lead["Deliverability Badge"] = "🟢 Scraped"
+                            found_e += 1
+                        if phones:
+                            lead["Phone"] = ", ".join(phones)
+                            found_p += 1
+                    except Exception:
+                        pass
+                time.sleep(0.04)
+                self.after(0, self._refresh_text_display)
+                
+            self.is_enriching = False
+            self.after(0, self.batch_enrich_btn.configure, {"state": tk.NORMAL})
+            if hasattr(self, "scrape_sites_btn"):
+                self.after(0, self.scrape_sites_btn.configure, {"state": tk.NORMAL})
+            self.after(0, self.single_enrich_btn.configure, {"state": tk.NORMAL})
+            self.after(0, self._refresh_text_display)
+            self.after(0, self.status_var.set, f"✅ Scraped {total} site(s): {found_e} emails, {found_p} phone numbers.")
+            self.after(0, messagebox.showinfo, "✅ Site Scraping Complete",
+                f"Finished scraping {total} selected website(s)!\n\n"
+                f"✉️ Emails Discovered: {found_e}\n"
+                f"📞 Phone Numbers Discovered: {found_p}"
+            )
+            
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _refresh_text_display(self):
         fmt = self.format_var.get()
@@ -6313,6 +6910,7 @@ class GoogleLeadScraperSuite(tk.Tk):
                     tag = "not_found"
                     
                 display_email = r.get("Enriched Email") or r.get("Email") or "-"
+                display_phone = r.get("Phone") or "-"
                 display_domain = r.get("Domain") or "-"
                 
                 self.tree.insert(
@@ -6326,6 +6924,7 @@ class GoogleLeadScraperSuite(tk.Tk):
                         r.get("Headline / Role", "-"),
                         r.get("Organisation", "-"),
                         display_email,
+                        display_phone,
                         badge,
                         display_domain,
                         r.get("URL", "-")
@@ -6452,6 +7051,65 @@ class GoogleLeadScraperSuite(tk.Tk):
 
     def _on_tree_select(self, event):
         pass
+
+    def _get_leads_tree_row_tooltip(self, item):
+        """Generates an adaptive hover preview card for rows in the Leads table."""
+        try:
+            idx = int(item)
+            data = self._get_filtered_data()
+            if 0 <= idx < len(data):
+                r = data[idx]
+                lines = [
+                    f"👤 {r.get('Name', '-')}",
+                    f"💼 Role: {r.get('Headline / Role', '-')}",
+                    f"🏢 Company: {r.get('Organisation', '-')}",
+                    f"✉️ Email: {r.get('Enriched Email') or r.get('Email', '-')}",
+                    f"📞 Phone: {r.get('Phone', 'No phone listed')}",
+                    f"🛡️ Status: {r.get('Deliverability', 'Not Checked')}  |  🌐 Domain: {r.get('Domain', '-')}"
+                ]
+                if r.get('URL'):
+                    lines.append(f"🔗 URL: {r.get('URL')}")
+                if r.get('Snippet'):
+                    lines.append(f"📝 Snippet: {r.get('Snippet')}")
+                return "\n".join(lines)
+        except Exception:
+            pass
+        return ""
+
+    def _get_verifier_tree_row_tooltip(self, item):
+        """Generates an adaptive hover preview card for rows in the Verifier table."""
+        try:
+            idx = int(item)
+            data = self._get_filtered_verifier_data()
+            if 0 <= idx < len(data):
+                r = data[idx]
+                lines = [
+                    f"✉️ Target Email: {r.get('email', '')}",
+                    f"👤 Info / Name: {r.get('info', '')}",
+                    f"🌐 Domain: {r.get('domain', '')}  |  🛡️ Status: {r.get('status', '')}",
+                    f"🖥️ MX Server: {r.get('mx_host', 'None')} (SMTP Code: {r.get('smtp_code', '-')}, Latency: {r.get('response_time_ms', 0)}ms)"
+                ]
+                if r.get('details'):
+                    lines.append(f"📝 Handshake Log: {r.get('details')}")
+                return "\n".join(lines)
+        except Exception:
+            pass
+        return ""
+
+    def _get_opendata_tree_row_tooltip(self, item):
+        """Generates an adaptive hover preview card for rows in the Public Registry table."""
+        try:
+            vals = self.opendata_tree.item(item, "values")
+            if vals and self.opendata_headers:
+                lines = []
+                for h, v in zip(self.opendata_headers, vals):
+                    if str(v).strip():
+                        lines.append(f"• {h}: {v}")
+                return "\n".join(lines[:14])
+        except Exception:
+            pass
+        return ""
+
 
     def _enrich_selected_lead(self):
         """Enriches all currently selected contacts in the Treeview table (single or multi-select)."""
@@ -6734,6 +7392,8 @@ class GoogleLeadScraperSuite(tk.Tk):
         
         ind_combo = ttk.Combobox(f1, state="readonly", width=42)
         ind_combo['values'] = (
+            "🌐 Auto-Detect Website Domain (Commercial Sites & Facilities)",
+            "♻️ UK Waste & Environment Agencies (EA / SEPA / NRW)",
             "🚒 UK Fire & Rescue Services (50+ official .gov.uk domains)",
             "🏥 NHS Trusts & Health Boards (.nhs.uk domains)",
             "🏛️ UK Local Councils & Authorities (.gov.uk)",
@@ -6742,14 +7402,20 @@ class GoogleLeadScraperSuite(tk.Tk):
         )
         
         curr_ind = self.enrich_industry_var.get()
-        if curr_ind == "nhs":
+        if curr_ind == "auto":
+            ind_combo.current(0)
+        elif curr_ind in ["waste", "environment", "recycling"]:
             ind_combo.current(1)
-        elif curr_ind == "council":
+        elif curr_ind == "fire":
             ind_combo.current(2)
-        elif curr_ind == "police":
+        elif curr_ind == "nhs":
             ind_combo.current(3)
-        elif curr_ind == "custom":
+        elif curr_ind == "council":
             ind_combo.current(4)
+        elif curr_ind == "police":
+            ind_combo.current(5)
+        elif curr_ind == "custom":
+            ind_combo.current(6)
         else:
             ind_combo.current(0)
             
@@ -6772,11 +7438,11 @@ class GoogleLeadScraperSuite(tk.Tk):
         
         pat_combo = ttk.Combobox(f2, state="readonly", width=42)
         pat_combo['values'] = (
-            "{first}.{last}@{domain} (e.g. john.smith@london-fire.gov.uk - UK Public Sector Standard)",
-            "{f}{last}@{domain} (e.g. jsmith@london-fire.gov.uk)",
-            "{first}{last}@{domain} (e.g. johnsmith@london-fire.gov.uk)",
-            "{first}_{last}@{domain} (e.g. john_smith@london-fire.gov.uk)",
-            "{last}.{first}@{domain} (e.g. smith.john@london-fire.gov.uk)"
+            "{first}.{last}@{domain} (e.g. john.smith@domain.com - Standard)",
+            "{f}{last}@{domain} (e.g. jsmith@domain.com)",
+            "{first}{last}@{domain} (e.g. johnsmith@domain.com)",
+            "{first}_{last}@{domain} (e.g. john_smith@domain.com)",
+            "{last}.{first}@{domain} (e.g. smith.john@domain.com)"
         )
         
         curr_pat = self.enrich_pattern_var.get()
@@ -6842,7 +7508,11 @@ class GoogleLeadScraperSuite(tk.Tk):
         def _save_settings():
             # Save industry
             raw_ind = ind_combo.get()
-            if "NHS" in raw_ind:
+            if "Auto-Detect" in raw_ind:
+                self.enrich_industry_var.set("auto")
+            elif "Waste" in raw_ind or "Environment" in raw_ind:
+                self.enrich_industry_var.set("waste")
+            elif "NHS" in raw_ind:
                 self.enrich_industry_var.set("nhs")
             elif "Council" in raw_ind:
                 self.enrich_industry_var.set("council")

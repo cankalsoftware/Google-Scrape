@@ -248,6 +248,60 @@ JOB_URL_PATTERNS = [
     r'/jobs?/', r'/vacanc(?:y|ies)/', r'/job-opportunity/', r'/employment-opportunity/'
 ]
 
+DIRECTORY_AGGREGATOR_DOMAINS = {
+    "yell.com", "yelp.com", "yelp.co.uk", "yelp.ca", "yelp.com.au",
+    "thomsonlocal.com", "192.com", "cylex-uk.co.uk", "cylex.com", "cylex.co.uk",
+    "scoot.co.uk", "freeindex.co.uk", "checkatrade.com", "trustpilot.com",
+    "reviews.io", "feefo.com", "tripadvisor.com", "tripadvisor.co.uk",
+    "yellowpages.com", "yellowpages.co.uk", "kompass.com", "endole.co.uk",
+    "companieshouse.gov.uk", "company-information.service.gov.uk",
+    "bizwiki.co.uk", "touchlocal.com", "hotfrog.co.uk", "brownbook.net",
+    "misterwhat.co.uk", "locallife.co.uk", "thephonebook.bt.com", "opendi.co.uk",
+    "gbpedia.com", "duedil.com", "pomanda.com", "creditsafe.com", "zoominfo.com",
+    "apollo.io", "rocketreach.co", "crunchbase.com", "thebusinessdesk.com",
+    "near.me", "find-open.co.uk", "approvedbusiness.co.uk", "businessmagnet.co.uk",
+    "applegate.co.uk", "directory.co.uk", "uksmallbusinessdirectory.co.uk",
+    "directorymegastore.com", "localheroes.com", "ratedpeople.com", "bark.com",
+    "mybuilder.com", "trustatrader.com", "trustmark.org.uk"
+}
+
+DIRECTORY_URL_PATTERNS = [
+    r'/directory(?:/|$)', r'/directories(?:/|$)', r'/listings?(?:/|$)', r'/companies(?:/|$)',
+    r'/company/[a-z0-9-]+/\d+', r'/reviews?(?:/|$)', r'/profile/[a-z0-9-]+/\d+',
+    r'/find/[a-z0-9-]+', r'/search/[a-z0-9-]+', r'/biz/[a-z0-9-]+', r'/businesses/'
+]
+
+DIRECTORY_TITLE_PATTERNS = [
+    r'\b(?:on\s+yell|yell\.com|on\s+yelp|yelp\.co\.uk|thomson\s*local|freeindex|cylex|checkatrade|trustpilot|yellow\s*pages|kompass|endole|bizwiki|companies\s*house|business\s*directory|find\s*(?:a\s*)?local|reviews\s*&\s*ratings)\b'
+]
+
+NEWS_MEDIA_DOMAINS = {
+    "bbc.co.uk", "bbc.com", "theguardian.com", "dailymail.co.uk", "thesun.co.uk",
+    "mirror.co.uk", "independent.co.uk", "telegraph.co.uk", "itv.com", "sky.com",
+    "news.sky.com", "reuters.com", "bloomberg.com", "huffingtonpost.co.uk",
+    "standard.co.uk", "eveningstandard.co.uk", "express.co.uk", "metro.co.uk",
+    "insidermedia.com", "business-live.co.uk", "letsrecycle.com", "mrw.co.uk",
+    "edie.net", "yorkshirepost.co.uk", "manchestereveningnews.co.uk",
+    "birminghammail.co.uk", "walesonline.co.uk", "scotsman.com", "heraldscotland.com",
+    "chroniclelive.co.uk", "liverpoolecho.co.uk", "businesswire.com", "prnewswire.com",
+    "globenewswire.com", "ft.com", "economist.com", "forbes.com", "cnn.com",
+    "thetimes.co.uk", "thetimes.com", "thecourier.co.uk", "pressandjournal.co.uk",
+    "irishnews.com", "belfasttelegraph.co.uk", "theargus.co.uk", "dailyecho.co.uk",
+    "theboltonnews.co.uk", "lancashiretelegraph.co.uk", "gazettelive.co.uk",
+    "wales247.co.uk", "businessgreen.com", "circularonline.co.uk", "resource.co"
+}
+
+NEWS_URL_PATTERNS = [
+    r'/news(?:/|$)', r'/article(?:s)?(?:/|$)', r'/story(?:/|$)', r'/stories(?:/|$)',
+    r'/press-release(?:s)?(?:/|$)', r'/breaking-news(?:/|$)', r'/latest-news(?:/|$)',
+    r'/\d{4}/\d{2}/\d{2}/', r'/\d{4}/\d{2}/[a-z0-9-]+', r'/opinion(?:/|$)',
+    r'/columnists(?:/|$)', r'/editorial(?:/|$)', r'/report(?:/|$)', r'/live-updates(?:/|$)'
+]
+
+NEWS_TITLE_PATTERNS = [
+    r'\b(?:bbc\s+news|sky\s+news|itv\s+news|the\s+guardian|daily\s+mail|the\s+sun|the\s+mirror|the\s+telegraph|the\s+times|breaking\s+news|latest\s+news|blaze\s+at|fire\s+breaks\s+out|firefighters\s+tackle|investigation\s+(?:launched|underway)|exclusive\s+report|press\s+release|opinion\s*:|watch\s+video)\b'
+]
+
 def is_job_posting_url(url: str) -> bool:
     """Detects whether a URL originates from a job recruitment aggregator board."""
     if not url:
@@ -263,6 +317,120 @@ def is_job_posting_url(url: str) -> bool:
     except Exception:
         pass
     return False
+
+def is_directory_aggregator_url(url: str, title: str = "", snippet: str = "") -> bool:
+    """Detects whether a URL originates from a third-party business directory, reviews aggregator, or listing portal."""
+    if not url:
+        return False
+    try:
+        parsed = urllib.parse.urlparse(url)
+        netloc = re.sub(r'^www\.', '', parsed.netloc.lower())
+        if netloc in DIRECTORY_AGGREGATOR_DOMAINS or any(netloc.endswith("." + d) for d in DIRECTORY_AGGREGATOR_DOMAINS):
+            return True
+        if any(re.search(p, parsed.path, re.IGNORECASE) for p in DIRECTORY_URL_PATTERNS):
+            if not any(k in parsed.path.lower() for k in ["/about", "/contact", "/facility", "/services", "/solutions"]):
+                return True
+        combined = f"{title} {snippet}".lower()
+        if any(re.search(p, combined, re.IGNORECASE) for p in DIRECTORY_TITLE_PATTERNS):
+            return True
+    except Exception:
+        pass
+    return False
+
+def is_news_or_media_url(url: str, title: str = "", snippet: str = "") -> bool:
+    """Detects whether a URL is a news article, press release, or media story."""
+    if not url:
+        return False
+    try:
+        parsed = urllib.parse.urlparse(url)
+        netloc = re.sub(r'^www\.', '', parsed.netloc.lower())
+        if netloc in NEWS_MEDIA_DOMAINS or any(netloc.endswith("." + nm) for nm in NEWS_MEDIA_DOMAINS):
+            return True
+        if any(re.search(p, parsed.path, re.IGNORECASE) for p in NEWS_URL_PATTERNS):
+            if not any(k in parsed.path.lower() for k in ["/about", "/contact", "/facility", "/facilities", "/services", "/products"]):
+                return True
+        combined = f"{title} {snippet}".lower()
+        if any(re.search(p, combined, re.IGNORECASE) for p in NEWS_TITLE_PATTERNS):
+            return True
+    except Exception:
+        pass
+    return False
+
+def is_business_domain_match(company: str, domain: str, title: str = "") -> bool:
+    """Checks whether the resolved domain matches the commercial business name/title."""
+    if not domain:
+        return False
+    domain_clean = re.sub(r'^www\.', '', domain.lower().strip())
+    dom_stem = domain_clean.split('.')[0]
+    
+    clean_company = re.sub(r'[^a-zA-Z0-9]', '', company.lower()) if company else ""
+    clean_title = re.sub(r'[^a-zA-Z0-9]', '', title.lower()) if title else ""
+    
+    # 1. Direct stem match in company or title
+    if dom_stem and (dom_stem in clean_company or dom_stem in clean_title):
+        return True
+        
+    # 2. Company word tokens in domain
+    comp_tokens = [w.lower() for w in re.split(r'[\s\-_&,.]+', company) if len(w) > 2 and w.lower() not in ["ltd", "limited", "plc", "uk", "group", "services", "the", "and"]]
+    if comp_tokens and any(tok in domain_clean for tok in comp_tokens):
+        return True
+        
+    # 3. If single root domain and not in non-business domains
+    non_business = {"wikipedia.org", "gov.uk", "wordpress.com", "medium.com", "blogspot.com", "wixsite.com"}
+    if not any(nb in domain_clean for nb in non_business):
+        return True
+        
+    return False
+
+def classify_result_type(url: str, title: str = "", snippet: str = "") -> str:
+    """
+    Intelligently classifies search result items into discrete user groups:
+    '🏢 Commercial Business', '🏛️ Official Registry / Repo', '📰 News & Media',
+    '📁 Document / Report', '🗂️ Directory & Aggregator', '💼 Job Board', '👤 Profile / Person'
+    """
+    if not url:
+        return "🏢 Commercial Business"
+        
+    url_lower = url.lower()
+    title_lower = title.lower() if title else ""
+    snippet_lower = snippet.lower() if snippet else ""
+    combined = f"{title_lower} {snippet_lower}"
+    
+    # 1. LinkedIn / Social Person Profiles
+    if "linkedin.com/in/" in url_lower or " - linkedin" in title_lower or " | linkedin" in title_lower:
+        return "👤 Profile / Person"
+        
+    # 2. Documents & Downloadable Reports (.pdf, .doc, .xlsx, filings)
+    doc_extensions = (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".ppt", ".pptx")
+    if any(url_lower.endswith(ext) or f"{ext}?" in url_lower for ext in doc_extensions) or \
+       any(p in url_lower for p in ["/documents/", "/publications/", "/downloads/", "/filings/", "/reports/pdf/"]):
+        return "📁 Document / Report"
+        
+    # 3. Official Public Registries & Code Repositories
+    registry_indicators = [
+        "environment.data.gov.uk", "sepa.org.uk", "naturalresources.wales",
+        "company-information.service.gov.uk", "companieshouse.gov.uk", "data.gov.uk",
+        "github.com", "gitlab.com", "bitbucket.org", "archive.org", "gov.uk/government/organisations"
+    ]
+    if any(reg in url_lower for reg in registry_indicators) or \
+       ("public register" in combined or "open data" in combined or "repository" in combined):
+        return "🏛️ Official Registry / Repo"
+        
+    # 4. Directory & Aggregator Sites
+    if is_directory_aggregator_url(url, title, snippet):
+        return "🗂️ Directory & Aggregator"
+        
+    # 5. News & Media Outlets
+    if is_news_or_media_url(url, title, snippet):
+        return "📰 News & Media"
+        
+    # 6. Job & Recruitment Boards
+    if is_job_posting_url(url):
+        return "💼 Job Board"
+        
+    # 7. Default to Direct Commercial Business
+    return "🏢 Commercial Business"
+
 
 _MX_CACHE = {}
 
@@ -1488,7 +1656,14 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.sort_column = None
         self.sort_reverse = False
         self.filter_company_var = tk.StringVar(value="(All Organisations)")
+        self.filter_type_var = tk.StringVar(value="(All Types / Groups)")
         self.filter_status_var = tk.StringVar(value="(All Statuses)")
+        
+        # Lead Quality & Group Exclusions
+        self.exclude_directories_var = tk.BooleanVar(value=False)
+        self.exclude_news_var = tk.BooleanVar(value=False)
+        self.exclude_job_boards_var = tk.BooleanVar(value=False)
+        self.require_business_domain_match_var = tk.BooleanVar(value=False)
 
         # Email & CSV Verifier State
         self.verifier_data = []           # List of dicts for verification
@@ -2385,13 +2560,15 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         
         self.gen_exclude_combo = ttk.Combobox(r4, values=[
             "Choose Exclusion Pattern...",
+            "🛡️ Exclude Directories (Yell, Yelp, 192, Thomson, etc.)",
+            "🛡️ Exclude News, Media & Press Outlets (BBC, Guardian, etc.)",
+            "🛡️ Exclude Directories + News + Job Boards (Pure Businesses)",
+            "🛡️ Exclude Council Tips + Directories + News + Jobs",
             "🛡️ Exclude Municipal/Council Tips & .gov.uk",
-            "🛡️ Exclude Council Tips + Job Boards",
             "🛡️ Exclude Job & Recruitment Boards Only",
             "🛡️ Exclude Public Sector / Government",
-            "🛡️ Exclude Directory & Aggregator Sites",
             "(No Exclusions)"
-        ], state="readonly", width=38)
+        ], state="readonly", width=42)
         self.gen_exclude_combo.current(0)
         self.gen_exclude_combo.pack(side=tk.LEFT, padx=(0, 6))
         self.gen_exclude_combo.bind("<<ComboboxSelected>>", self._on_gen_exclude_selected)
@@ -2572,18 +2749,38 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         
         self.filter_var = tk.StringVar()
         self.filter_var.trace_add("write", lambda *args: self._refresh_text_display())
-        filter_entry = ttk.Entry(filter_bar, textvariable=self.filter_var, font=("Segoe UI", 9), width=18)
-        filter_entry.pack(side=tk.LEFT, padx=(0, 10))
+        filter_entry = ttk.Entry(filter_bar, textvariable=self.filter_var, font=("Segoe UI", 9), width=16)
+        filter_entry.pack(side=tk.LEFT, padx=(0, 8))
         ToolTip(filter_entry, "Filter live results by any keyword, name, job title, domain, or email.")
         
+        # Result Type / Group Filter Dropdown
+        type_lbl = ttk.Label(filter_bar, text="📂 Category / Group:")
+        type_lbl.pack(side=tk.LEFT, padx=(0, 4))
+        
+        self.type_filter_combo = ttk.Combobox(filter_bar, textvariable=self.filter_type_var, state="readonly", width=22)
+        self.type_filter_combo['values'] = (
+            "(All Types / Groups)",
+            "🏢 Commercial Business",
+            "🏛️ Official Registry / Repo",
+            "📰 News & Media",
+            "📁 Document / Report",
+            "🗂️ Directory & Aggregator",
+            "💼 Job Board",
+            "👤 Profile / Person"
+        )
+        self.type_filter_combo.current(0)
+        self.type_filter_combo.pack(side=tk.LEFT, padx=(0, 8))
+        self.type_filter_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_text_display())
+        ToolTip(self.type_filter_combo, "Group and filter results by category (e.g. Commercial Businesses, News & Media, Registries/Repositories, Documents/PDFs).")
+
         # Organisation / Company Categorisation Dropdown Filter
         comp_lbl = ttk.Label(filter_bar, text="🏢 Organisation:")
         comp_lbl.pack(side=tk.LEFT, padx=(0, 4))
         
-        self.company_filter_combo = ttk.Combobox(filter_bar, textvariable=self.filter_company_var, state="readonly", width=26)
+        self.company_filter_combo = ttk.Combobox(filter_bar, textvariable=self.filter_company_var, state="readonly", width=22)
         self.company_filter_combo['values'] = ("(All Organisations)",)
         self.company_filter_combo.current(0)
-        self.company_filter_combo.pack(side=tk.LEFT, padx=(0, 10))
+        self.company_filter_combo.pack(side=tk.LEFT, padx=(0, 8))
         self.company_filter_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_text_display())
         ToolTip(self.company_filter_combo, "Categorise and filter results to show only contacts from a specific company or service.")
         
@@ -2591,7 +2788,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         stat_lbl = ttk.Label(filter_bar, text="🛡️ Status:")
         stat_lbl.pack(side=tk.LEFT, padx=(0, 4))
         
-        self.status_filter_combo = ttk.Combobox(filter_bar, textvariable=self.filter_status_var, state="readonly", width=18)
+        self.status_filter_combo = ttk.Combobox(filter_bar, textvariable=self.filter_status_var, state="readonly", width=16)
         self.status_filter_combo['values'] = (
             "(All Statuses)",
             "🟢 Valid Only",
@@ -2606,7 +2803,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         
         btn_reset_filters = ttk.Button(filter_bar, text="🔄 Reset Filters", style="Secondary.TButton", command=self._reset_results_filters)
         btn_reset_filters.pack(side=tk.LEFT)
-        ToolTip(btn_reset_filters, "Clears text filter, organisation dropdown, and status filter back to default.")
+        ToolTip(btn_reset_filters, "Clears text filter, category group, organisation dropdown, and status filter back to default.")
         
         # 3. Action Toolbar (Row 2)
         enrich_bar = ttk.Frame(self.tab_results)
@@ -2654,9 +2851,10 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         # A. Interactive Table View (ttk.Treeview)
         self.tree_frame = ttk.Frame(self.view_container)
         
-        tree_cols = ("#", "first_name", "last_name", "role", "org", "email", "phone", "status", "domain", "url")
+        tree_cols = ("#", "type", "first_name", "last_name", "role", "org", "email", "phone", "status", "domain", "url")
         self.col_titles = {
             "#": "#",
+            "type": "Category / Group",
             "first_name": "First Name",
             "last_name": "Surname",
             "role": "Job Role / Title",
@@ -2674,6 +2872,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             self.tree.heading(col, text=self.col_titles[col], command=lambda c=col: self._sort_by_column(c))
         
         self.tree.column("#", width=38, minwidth=28, anchor="center")
+        self.tree.column("type", width=145, minwidth=110, anchor="w")
         self.tree.column("first_name", width=85, minwidth=65, anchor="w")
         self.tree.column("last_name", width=95, minwidth=70, anchor="w")
         self.tree.column("role", width=155, minwidth=100, anchor="w")
@@ -2708,6 +2907,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.tree_menu = tk.Menu(self, tearoff=0)
         self.tree_menu.add_command(label="⚡ Enrich Selected Contact(s)", command=self._enrich_selected_lead)
         self.tree_menu.add_command(label="🌐 Scrape Contacts from this Website", command=self._scrape_selected_site_contacts)
+        self.tree_menu.add_command(label="📂 Filter Table by this Category / Group", command=self._filter_by_selected_type)
         self.tree_menu.add_command(label="🏢 Filter Table by this Organisation", command=self._filter_by_selected_org)
         self.tree_menu.add_separator()
         self.tree_menu.add_command(label="✉️ Copy Email", command=self._copy_selected_email)
@@ -6136,16 +6336,20 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
 
     def _on_gen_exclude_selected(self, event=None):
         val = self.gen_exclude_combo.get()
-        if "Municipal/Council Tips & .gov.uk" in val:
+        if "Directories (Yell, Yelp" in val:
+            self.gen_exclude_var.set("-yell.com -yelp.co.uk -yelp.com -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories")
+        elif "News, Media & Press" in val:
+            self.gen_exclude_var.set("-news -bbc.co.uk -theguardian.com -dailymail.co.uk -thesun.co.uk -mirror.co.uk -telegraph.co.uk -itv.com -reuters.com -bloomberg.com -article -story")
+        elif "Directories + News + Job" in val:
+            self.gen_exclude_var.set("-yell.com -yelp.co.uk -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories -news -bbc.co.uk -theguardian.com -dailymail.co.uk -jobs -careers -vacancies")
+        elif "Council Tips + Directories" in val:
+            self.gen_exclude_var.set("-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -yell.com -yelp.co.uk -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -directory -news -bbc.co.uk")
+        elif "Municipal/Council Tips & .gov.uk" in val:
             self.gen_exclude_var.set("-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -fish4")
-        elif "Council Tips + Job" in val:
-            self.gen_exclude_var.set("-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -totaljobs -reed -fish4")
         elif "Job & Recruitment" in val:
             self.gen_exclude_var.set("-jobs -recruiting -indeed -careers -vacancies -totaljobs -reed -fish4 -cv-library")
         elif "Public Sector" in val:
             self.gen_exclude_var.set("-gov -council -nhs -police -.gov.uk -.nhs.uk")
-        elif "Directory" in val:
-            self.gen_exclude_var.set("-yell -thomsonlocal -checkatrade -192.com -trustpilot")
         elif "No Exclusions" in val:
             self.gen_exclude_var.set("")
         self._rebuild_query()
@@ -6158,7 +6362,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.gen_industry_var.set('("Materials Recovery Facility" OR "waste transfer station" OR "commercial recycling facility")')
         self.gen_scale_var.set('("multiple sites" OR "depots across" OR "nationwide" OR "head office")')
         self.gen_geo_var.set('("United Kingdom" OR "UK" OR "England" OR "Scotland" OR "Wales")')
-        self.gen_exclude_var.set('-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -fish4')
+        self.gen_exclude_var.set('-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -yell.com -yelp.co.uk -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories -news -bbc.co.uk -theguardian.com -dailymail.co.uk -thesun.co.uk -mirror.co.uk -telegraph.co.uk -itv.com')
         self.gen_intext_var.set("")
         self.gen_inurl_var.set("")
         self.gen_site_var.set("")
@@ -6747,7 +6951,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             href = item["href"]
             snippet = item["snippet"]
             
-            # Check if this lead originates from a job recruitment aggregator board (e.g. Fish4, Indeed, Reed, Totaljobs)
+            # Check if this lead originates from a job recruitment aggregator board
             if getattr(self, "exclude_job_boards_var", None) and self.exclude_job_boards_var.get():
                 if is_job_posting_url(href):
                     continue
@@ -6756,8 +6960,13 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             emails = EMAIL_PATTERN.findall(combined_text)
             phones = extract_phones_from_soup_or_text(text=combined_text)
             
+            # Classify result type group
+            res_type = classify_result_type(href, raw_title, snippet)
+            
             # Check if this lead is a LinkedIn profile vs an Open-Web / Corporate / Facility result
             is_linkedin = "linkedin.com/in/" in href or " - LinkedIn" in raw_title or " | LinkedIn" in raw_title
+            if is_linkedin:
+                res_type = "👤 Profile / Person"
             
             # 1. Extract destination URL domain
             url_domain = ""
@@ -6866,6 +7075,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                 deliv_badge = "🟢 Scraped" if raw_email else "⚪ Not Found"
             
             normalized_leads.append({
+                "Type": res_type,
                 "First Name": first_name,
                 "Last Name": last_name,
                 "Name": display_name,
@@ -7282,11 +7492,18 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             messagebox.showinfo("Search Complete", f"Extraction completed on {self.engine_var.get()}!\n\nFound: {count} leads\nExtracted Emails: {email_count}\n\nResults are ready in the table and text box for export.")
 
     def _get_filtered_data(self):
-        """Returns results filtered by search text, organisation, status, and sorted by active column."""
+        """Returns results filtered by search text, category/group, organisation, status, and sorted by active column."""
         filt = self.filter_var.get().lower().strip()
+        type_filter = self.filter_type_var.get().strip() if hasattr(self, "filter_type_var") else ""
         comp_filter = self.filter_company_var.get().strip() if hasattr(self, "filter_company_var") else ""
         stat_filter = self.filter_status_var.get().strip() if hasattr(self, "filter_status_var") else ""
         
+        # Clean category filter
+        if type_filter and type_filter != "(All Types / Groups)":
+            type_clean = re.sub(r'^[^\w]+', '', type_filter).lower().replace("only", "").strip()
+        else:
+            type_clean = ""
+            
         # Strip count from company filter e.g. "London Fire Brigade (12)" -> "London Fire Brigade"
         if comp_filter and comp_filter != "(All Organisations)":
             comp_match = re.sub(r'\s*\(\d+\)$', '', comp_filter).lower().strip()
@@ -7303,6 +7520,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                     filt in r.get("Last Name", "").lower() or
                     filt in r.get("Headline / Role", "").lower() or
                     filt in r.get("Organisation", "").lower() or
+                    filt in r.get("Type", "").lower() or
                     filt in r.get("Domain", "").lower() or
                     filt in r.get("Enriched Email", "").lower() or
                     filt in r.get("Email", "").lower() or
@@ -7311,6 +7529,12 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                     filt in r.get("Snippet", "").lower()
                 )
                 if not match:
+                    continue
+                    
+            # 1b. Result Type / Category Group filter
+            if type_clean:
+                r_type = r.get("Type", "🏢 Commercial Business").lower()
+                if type_clean not in r_type:
                     continue
                     
             # 2. Company / Organisation filter
@@ -7338,6 +7562,8 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             def sort_key(item):
                 if self.sort_column == "#":
                     return self.results_data.index(item) if item in self.results_data else 0
+                elif self.sort_column == "type":
+                    return (item.get("Type") or "").lower()
                 elif self.sort_column == "first_name":
                     return (item.get("First Name") or "").lower()
                 elif self.sort_column == "last_name":
@@ -7415,8 +7641,10 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                 self.filter_company_var.set("(All Organisations)")
 
     def _reset_results_filters(self):
-        """Resets search filter, company filter, status filter, and column sorting back to default."""
+        """Resets search filter, category group, company filter, status filter, and column sorting back to default."""
         self.filter_var.set("")
+        if hasattr(self, "filter_type_var"):
+            self.filter_type_var.set("(All Types / Groups)")
         self.filter_company_var.set("(All Organisations)")
         self.filter_status_var.set("(All Statuses)")
         self.sort_column = None
@@ -7436,6 +7664,23 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                 self.tree_menu.tk_popup(event.x_root, event.y_root)
             finally:
                 self.tree_menu.grab_release()
+
+    def _filter_by_selected_type(self):
+        """Filters results by the Category/Type of the clicked table row."""
+        selected = self.tree.selection()
+        if not selected:
+            return
+        data = self._get_filtered_data()
+        try:
+            idx = int(selected[0])
+            if 0 <= idx < len(data):
+                t_val = data[idx].get("Type", "").strip()
+                if t_val and hasattr(self, "filter_type_var"):
+                    self.filter_type_var.set(t_val)
+                    self._refresh_text_display()
+                    self.status_var.set(f"Filtered results by category group: '{t_val}'")
+        except Exception:
+            pass
 
     def _filter_by_selected_org(self):
         """Filters results by the organisation of the clicked table row."""
@@ -7739,6 +7984,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                     iid=str(idx - 1),
                     values=(
                         idx,
+                        r.get("Type", "🏢 Commercial Business"),
                         r.get("First Name", "-"),
                         r.get("Last Name", "-"),
                         r.get("Headline / Role", "-"),
@@ -7765,6 +8011,8 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                 lines = []
                 for idx, item in enumerate(data, 1):
                     lines.append(f"[{idx}] {item.get('Name', '')}")
+                    if item.get('Type'):
+                        lines.append(f"    Category:{item.get('Type', '')}")
                     if item.get('First Name') or item.get('Last Name'):
                         lines.append(f"    Name:    {item.get('First Name', '')} {item.get('Last Name', '')}")
                     if item.get('Headline / Role'):
@@ -7788,10 +8036,11 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                 self.results_text.insert(tk.END, "\n".join(lines))
                 
             elif fmt == "tsv":
-                headers = ["First Name", "Last Name", "Job Title", "Organisation", "Enriched Email", "Deliverability", "Domain", "MX Server", "Phone", "URL", "Snippet"]
+                headers = ["Category / Group", "First Name", "Last Name", "Job Title", "Organisation", "Enriched Email", "Deliverability", "Domain", "MX Server", "Phone", "URL", "Snippet"]
                 lines = ["\t".join(headers)]
                 for item in data:
                     row = [
+                        item.get("Type", "🏢 Commercial Business").replace("\t", " "),
                         item.get("First Name", "").replace("\t", " "),
                         item.get("Last Name", "").replace("\t", " "),
                         item.get("Headline / Role", "").replace("\t", " "),
@@ -7809,11 +8058,12 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                 
             elif fmt == "csv":
                 output = io.StringIO()
-                fieldnames = ["First Name", "Last Name", "Job Title", "Organisation", "Enriched Email", "Deliverability", "Domain", "MX Server", "Phone", "URL", "Snippet"]
+                fieldnames = ["Category / Group", "First Name", "Last Name", "Job Title", "Organisation", "Enriched Email", "Deliverability", "Domain", "MX Server", "Phone", "URL", "Snippet"]
                 writer = csv.DictWriter(output, fieldnames=fieldnames)
                 writer.writeheader()
                 for item in data:
                     writer.writerow({
+                        "Category / Group": item.get("Type", "🏢 Commercial Business"),
                         "First Name": item.get("First Name", ""),
                         "Last Name": item.get("Last Name", ""),
                         "Job Title": item.get("Headline / Role", ""),
@@ -8146,6 +8396,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         try:
             with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
                 fieldnames = [
+                    "Category / Group",
                     "First Name",
                     "Last Name",
                     "Full Name",
@@ -8156,7 +8407,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                     "Deliverability Status",
                     "MX Server Host",
                     "Phone",
-                    "LinkedIn Profile URL",
+                    "Source URL",
                     "Search Snippet Context"
                 ]
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -8165,6 +8416,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                 for item in self.results_data:
                     email_val = item.get("Enriched Email") or item.get("Email", "")
                     writer.writerow({
+                        "Category / Group": item.get("Type", "🏢 Commercial Business"),
                         "First Name": item.get("First Name", ""),
                         "Last Name": item.get("Last Name", ""),
                         "Full Name": item.get("Name", ""),
@@ -8175,7 +8427,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                         "Deliverability Status": item.get("Deliverability", "Not Enriched"),
                         "MX Server Host": item.get("MX Server", ""),
                         "Phone": item.get("Phone", ""),
-                        "LinkedIn Profile URL": item.get("URL", ""),
+                        "Source URL": item.get("URL", ""),
                         "Search Snippet Context": item.get("Snippet", "")
                     })
                     
@@ -8434,11 +8686,12 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             
         try:
             with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
-                fieldnames = ["Name", "Headline / Role", "Organisation", "Email", "Phone", "URL", "Snippet Context"]
+                fieldnames = ["Category / Group", "Name", "Headline / Role", "Organisation", "Email", "Phone", "URL", "Snippet Context"]
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
                 for item in self.results_data:
                     writer.writerow({
+                        "Category / Group": item.get("Type", "🏢 Commercial Business"),
                         "Name": item.get("Name", ""),
                         "Headline / Role": item.get("Headline / Role", ""),
                         "Organisation": item.get("Organisation", ""),

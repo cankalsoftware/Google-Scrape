@@ -171,10 +171,26 @@ Quickly accessible via the **`Load Template:`** dropdown in Tab 1 or the **Cheat
    - *Targets*: Outstations, regional control centres, maintenance facilities, and infrastructure contractors across the UK strategic road network.
 
 ##### 🌐 Sub-Tab 2: Generalized Industry & Facility Search (Multi-Group Boolean)
-Best for discovering commercial operations, industrial facilities, distribution networks, fleet depots, and multi-site companies across the open web using structured multi-group boolean operators:
+Best for discovering commercial operations, industrial facilities, distribution networks, fleet depots, and multi-site companies with high fire and smoke hazards across the open web using structured multi-group boolean operators:
 - **⭐ 1-Click Waste & Facility Example**: Click the button at the top to instantly load:
   `("Materials Recovery Facility" OR "waste transfer station" OR "commercial recycling facility") ("multiple sites" OR "depots across" OR "nationwide" OR "head office") ("United Kingdom" OR "UK" OR "England" OR "Scotland" OR "Wales") -council -civic -household -tip -hwrc -.gov.uk`
-- **Group 1: Facility / Industry Terms (OR)**: Enter facility types or pick presets (e.g., *Materials Recovery & Waste Facilities*, *Logistics & Distribution Warehouses*, *Fleet Operating Depots*, *Manufacturing Plants*, *Energy & Biomass*, *Data Centers*, *Chemical/COMAH Sites*, *Scrap & Metal Recycling*).
+- **Group 1: Facility / Industry Terms (OR)**: Enter facility types or pick high fire & smoke hazard presets:
+  - `♻️ Materials Recovery & Waste Facilities`: MRFs, transfer stations, and sorting facilities.
+  - `🧴 Plastics Recycling & Polymer Processing`: Polymer reprocessors, granulate plants, and baling depots.
+  - `🪵 Wood, Timber & Paper Recycling`: Timber processing mills, paper mills, cardboard recyclers, and biomass wood chip yards.
+  - `🌾 Farms, Agriculture & Grain Silos`: Grain dryers, agricultural storage silos, and large farming estates.
+  - `📦 Warehouse Management & 3PL Logistics`: 3PL fulfilment centres, distribution centres, and bonded warehouses.
+  - `🏗️ Outside Storage & Open Yard Storage`: Open yard storage, bulk material yards, and pallet storage depots.
+  - `🛞 Tyre Recycling & Rubber Pyrolysis`: Tyre shredding, rubber crumb reprocessing, and pyrolysis plants.
+  - `🔋 Battery Storage (BESS) & Lithium-Ion`: Battery energy storage facilities and lithium battery recycling sites.
+  - `🧵 Textiles, Fabric & Rag Baling`: Textile recycling depots, rag processing plants, and fabric shredders.
+  - `🌾 Food Processing, Mills & Bakeries (Dust)`: Flour mills, feed mills, industrial bakeries (combustible dust hazard).
+  - `🛢️ Chemical & Hazmat Storage (COMAH)`: COMAH sites, bulk fuel terminals, and hazardous solvent stores.
+  - `🚗 Metal Scrap & Vehicle Dismantlers (ATF)`: Scrap metal yards, vehicle depollution facilities, and ELV dismantlers.
+  - `🚛 Transport & Fleet Operating Depots`: Commercial fleet operating centres and haulage depots.
+  - `🏭 Industrial Manufacturing & Processing`: Manufacturing plants, production sites, and processing facilities.
+  - `⚡ Energy, Biomass & EfW Plants`: Energy from waste (EfW) facilities, biomass plants, and anaerobic digestion.
+  - `🖥️ Data Centers & Colocation Infrastructure`: Data centres, server farms, and carrier-neutral colocation facilities.
 - **Group 2: Operational Scale & Multi-Site Scope (OR)**: Define footprint requirements or pick presets (*Multi-Site & Nationwide*, *Regional Hubs & Depots*, *Corporate HQ*, *UK-Wide Coverage*).
 - **Group 3: Geographic & Country Filter (OR)**: Define national/regional boundaries (*UK & Home Nations*, *England & London*, *Scotland & NI*, *USA Nationwide*, *Europe*).
 - **Group 4: Negative Exclusions & Cleaners (-)**: Filter out unwanted public or consumer sites (*Exclude Municipal/Council Tips & .gov.uk*, *Exclude Job Boards*, *Exclude Public Sector*, *Exclude Directories*).

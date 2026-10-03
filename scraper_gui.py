@@ -38,7 +38,146 @@ except (ImportError, Exception):
 
 # Regex patterns for contact information extraction
 EMAIL_PATTERN = re.compile(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+')
-PHONE_PATTERN = re.compile(r'(?:(?:\+44\s?\(0\)\s?\d{2,4}|\+44\s?\d{2,4}|0\d{2,4})\s?\d{3,4}\s?\d{3,4}|\+?\d{1,3}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9})')
+
+# Strict UK & International Phone Number Patterns with lookaround boundaries
+UK_PHONE_REGEX = re.compile(
+    r'(?<![\d.\-/])(?:'
+    r'(?:\+44\s?(?:\(0\))?|\(\+44\)\s?(?:\(0\))?|0044\s?(?:\(0\))?)\s?[12378]\d{1,4}(?:[\s.-]?\d{3,4}){2}'
+    r'|'
+    r'0[12378]\d{1,4}(?:[\s.-]?\d{3,4}){2}'
+    r')(?![\d.\-/])'
+)
+
+INTL_PHONE_REGEX = re.compile(
+    r'(?<![\d.\-/])(?:\+\d{1,3}\s?(?:\(\d{1,4}\)|\d{1,4})[\s.-]?\d{2,4}[\s.-]?\d{2,4}(?:[\s.-]?\d{2,4})?)(?![\d.\-/])'
+)
+
+LABELLED_PHONE_REGEX = re.compile(
+    r'(?:tel(?:ephone)?|phone|call(?:\s+us)?|mob(?:ile)?|direct|t|office|enquiries|contact|headquarters)\s*[:.\-]?\s*'
+    r'([+\d\s().\-/]{9,25})(?![\d.\-/])',
+    re.IGNORECASE
+)
+
+# Backward-compatible pattern
+PHONE_PATTERN = UK_PHONE_REGEX
+
+def clean_phone_candidate(ph_str: str) -> str:
+    """Cleans up leading/trailing punctuation and labels from telephone string."""
+    ph = ph_str.strip()
+    ph = re.sub(r'^[^\d+]+', '', ph)
+    ph = re.sub(r'[^\d)]+$', '', ph)
+    return ph.strip()
+
+def is_valid_phone_number(candidate: str) -> bool:
+    """
+    Validates whether a string is a genuine local or international phone number,
+    strictly rejecting floating-point decimals, coordinates, research stats, years, and dates.
+    """
+    if not candidate:
+        return False
+    ph = clean_phone_candidate(candidate)
+    digits = re.sub(r'\D', '', ph)
+    digit_count = len(digits)
+    
+    # 1. Length check: between 9 and 15 digits
+    if digit_count < 9 or digit_count > 15:
+        return False
+        
+    # 2. Reject floating point / decimal numbers / coordinates / metrics (e.g. 3.189369679, 0.1279989399, 13.0923886189, 23.6273625)
+    if '.' in ph:
+        dot_parts = ph.split('.')
+        for i, part in enumerate(dot_parts):
+            if i > 0 and len(part) > 4:
+                return False
+        if any(ph.startswith(f"{d}.") for d in range(10)):
+            if len(dot_parts) == 2 and len(dot_parts[1]) > 4:
+                return False
+                
+    # 3. Reject years and date patterns (e.g. 2024, 2023, 2024-05-12, 12/04/2023)
+    if re.fullmatch(r'^(?:19\d\d|20\d\d)$', digits):
+        return False
+    if re.search(r'^\d{4}[-/]\d{1,2}[-/]\d{1,2}$', ph) or re.search(r'^\d{1,2}[-/]\d{1,2}[-/]\d{4}$', ph):
+        return False
+        
+    # 4. Reject all identical digits (e.g. 0000000000, 1111111111)
+    if len(set(digits)) <= 2 and digit_count > 8:
+        return False
+        
+    # 5. Check structure
+    if UK_PHONE_REGEX.search(ph):
+        return True
+    if INTL_PHONE_REGEX.search(ph):
+        if ph.startswith('+') or ph.startswith('(+' ) or ph.startswith('00'):
+            return True
+        if ('(' in ph and ')' in ph) or ('-' in ph) or (' ' in ph):
+            if digit_count >= 10:
+                return True
+                
+    if digits.startswith('0') and digit_count in (10, 11):
+        if digits[1] in ('1', '2', '3', '7', '8'):
+            return True
+            
+    return False
+
+def extract_phones_from_soup_or_text(soup=None, text="") -> list:
+    """
+    Extracts valid telephone numbers from HTML elements (tel links, footers, contact sections)
+    and text, strictly filtering out statistics, decimals, years, and coordinates.
+    """
+    phones = []
+    
+    if soup:
+        # 1. Priority 1: Check explicit tel: hyperlinks (often in header/footer)
+        for a in soup.find_all("a", href=True):
+            href = a["href"].strip()
+            if href.lower().startswith("tel:"):
+                raw_tel = href.split("tel:")[1].split("?")[0].strip()
+                a_text = clean_phone_candidate(a.get_text(strip=True))
+                candidate = a_text if is_valid_phone_number(a_text) else clean_phone_candidate(raw_tel)
+                if is_valid_phone_number(candidate):
+                    phones.append(candidate)
+                    
+        # 2. Priority 2: Check footer, contact sections, and location containers
+        contact_elements = soup.find_all(["footer", "section", "div", "aside"], class_=re.compile(r"footer|contact|location|header|depot", re.I))
+        contact_elements += soup.find_all(["footer", "section", "div"], id=re.compile(r"footer|contact|location|header|depot", re.I))
+        for el in contact_elements:
+            el_text = el.get_text(separator=" ")
+            for m in LABELLED_PHONE_REGEX.finditer(el_text):
+                cleaned = clean_phone_candidate(m.group(1))
+                if is_valid_phone_number(cleaned):
+                    phones.append(cleaned)
+            for m in UK_PHONE_REGEX.finditer(el_text):
+                cleaned = clean_phone_candidate(m.group(0))
+                if is_valid_phone_number(cleaned):
+                    phones.append(cleaned)
+                    
+        text = soup.get_text(separator=" ")
+        
+    if text:
+        for m in LABELLED_PHONE_REGEX.finditer(text):
+            cleaned = clean_phone_candidate(m.group(1))
+            if is_valid_phone_number(cleaned):
+                phones.append(cleaned)
+        for m in UK_PHONE_REGEX.finditer(text):
+            cleaned = clean_phone_candidate(m.group(0))
+            if is_valid_phone_number(cleaned):
+                phones.append(cleaned)
+        for m in INTL_PHONE_REGEX.finditer(text):
+            cleaned = clean_phone_candidate(m.group(0))
+            if is_valid_phone_number(cleaned):
+                phones.append(cleaned)
+
+    # Clean, format, and deduplicate
+    unique = []
+    seen_digits = set()
+    for p in phones:
+        digits = re.sub(r'\D', '', p)
+        if digits not in seen_digits and digits[-9:] not in seen_digits:
+            seen_digits.add(digits)
+            seen_digits.add(digits[-9:])
+            unique.append(p)
+            
+    return unique
 
 # ---------------------------------------------------------------------------
 # MODULAR DATA & STORAGE LAYER (JSON Configs + SQLite Persistence)
@@ -336,32 +475,25 @@ def scrape_website_contacts(url: str, timeout: int = 8) -> dict:
                 if resp.status_code == 200 and "text/html" in resp.headers.get("Content-Type", ""):
                     soup = BeautifulSoup(resp.text, "html.parser")
                     
-                    # 1. Parse mailto & tel hyperlinks
+                    # 1. Parse mailto hyperlinks
                     for a in soup.find_all("a", href=True):
                         href_val = a["href"].strip()
                         if href_val.lower().startswith("mailto:"):
                             raw_mail = href_val.split("mailto:")[1].split("?")[0].strip().lower()
                             if EMAIL_PATTERN.match(raw_mail) and not any(junk in raw_mail for junk in ["example.com", "domain.com", "wixpress.com", "sentry.io", "wordpress.org"]):
                                 emails.append(raw_mail)
-                        elif href_val.lower().startswith("tel:"):
-                            raw_tel = href_val.split("tel:")[1].split("?")[0].strip()
-                            clean_tel = re.sub(r'[^\d+\s()\-]', '', raw_tel).strip()
-                            if len(re.sub(r'\D', '', clean_tel)) >= 7:
-                                phones.append(clean_tel)
                                 
-                    # 2. Text regex scan
+                    # 2. Extract validated telephone numbers from HTML elements (tel links, footer, contact sections) and text
+                    page_phones = extract_phones_from_soup_or_text(soup=soup)
+                    phones.extend(page_phones)
+                    
+                    # 3. Text regex scan for emails
                     page_text = soup.get_text(separator=" ")
                     found_emails = EMAIL_PATTERN.findall(page_text)
                     for em in found_emails:
                         em_clean = em.strip().lower()
                         if not any(junk in em_clean for junk in ["example.com", "domain.com", "wixpress.com", "sentry.io", "wordpress.org", "schema.org"]):
                             emails.append(em_clean)
-                            
-                    found_phones = PHONE_PATTERN.findall(page_text)
-                    for ph in found_phones:
-                        ph_clean = ph.strip()
-                        if len(re.sub(r'\D', '', ph_clean)) >= 7:
-                            phones.append(ph_clean)
                             
                     # 3. If homepage, discover on-page contact links
                     if checked_count == 1:
@@ -1309,8 +1441,17 @@ class GoogleLeadScraperSuite(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Multi-Engine Lead & Advanced Dork Extractor Suite")
-        self.geometry("1160x920")
-        self.minsize(980, 740)
+        
+        # Adaptive screen geometry sizing (fits any screen resolution / DPI scaling)
+        try:
+            screen_w = self.winfo_screenwidth()
+            screen_h = self.winfo_screenheight()
+            init_w = min(1200, max(920, screen_w - 60))
+            init_h = min(860, max(600, screen_h - 90))
+            self.geometry(f"{init_w}x{init_h}")
+        except Exception:
+            self.geometry("1160x820")
+        self.minsize(800, 500)
         
         # Application State
         self.is_running = False
@@ -1531,25 +1672,57 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         file_menu.add_command(label="❌ Exit", command=self._on_closing)
         menubar.add_cascade(label="File", menu=file_menu)
         
-        # 2. Templates Menu
+        # 2. Templates Menu (Organized by Strategy & Industry Risk)
         templates_menu = tk.Menu(menubar, tearoff=0)
-        templates_menu.add_command(label="♻️ Materials Recovery & Waste Facilities (UK)", command=lambda: self._load_preset("gen_waste"))
-        templates_menu.add_command(label="🏴󠁧󠁢󠁥󠁮󠁧󠁿 EA: Waste Permitting & Operations (England)", command=lambda: self._load_preset("ea_waste_ops"))
-        templates_menu.add_command(label="🏴󠁧󠁢󠁥󠁮󠁧󠁿 EA: Waste Carriers, Brokers & Dealers", command=lambda: self._load_preset("ea_waste_carriers"))
-        templates_menu.add_command(label="🏴󠁧󠁢󠁳󠁣󠁴󠁿 SEPA: Waste Carriers & Authorisations (Scotland)", command=lambda: self._load_preset("sepa_waste"))
-        templates_menu.add_command(label="🏴󠁧󠁢󠁷󠁬󠁳󠁿 NRW: Waste Permitting & Carriers (Wales)", command=lambda: self._load_preset("nrw_waste"))
-        templates_menu.add_command(label="🇬🇧 Combined UK Regulators (EA / SEPA / NRW)", command=lambda: self._load_preset("combined_uk_env_registers"))
+        
+        # Sub-Menu: 🔥 High Fire & Smoke Risk Multi-Site Industries
+        fire_risk_menu = tk.Menu(templates_menu, tearoff=0)
+        fire_risk_menu.add_command(label="♻️ Materials Recovery & Waste Facilities", command=lambda: self._load_preset("gen_waste"))
+        fire_risk_menu.add_command(label="🧴 Plastics Recycling & Polymer Reprocessing", command=lambda: self._load_preset("gen_plastics"))
+        fire_risk_menu.add_command(label="🪵 Wood, Timber & Paper Recycling", command=lambda: self._load_preset("gen_wood_paper"))
+        fire_risk_menu.add_command(label="🌾 Farms, Agriculture & Grain Silos", command=lambda: self._load_preset("gen_farms"))
+        fire_risk_menu.add_command(label="📦 Warehouse Management & 3PL Logistics", command=lambda: self._load_preset("gen_warehouses"))
+        fire_risk_menu.add_command(label="🏗️ Outside Storage & Open Yard Storage", command=lambda: self._load_preset("gen_outside_storage"))
+        fire_risk_menu.add_command(label="🛞 Tyre Recycling & Rubber Pyrolysis", command=lambda: self._load_preset("gen_tyres"))
+        fire_risk_menu.add_command(label="🔋 Battery Storage (BESS) & Lithium-Ion", command=lambda: self._load_preset("gen_batteries"))
+        fire_risk_menu.add_command(label="🧵 Textiles, Fabric & Rag Baling", command=lambda: self._load_preset("gen_textiles"))
+        fire_risk_menu.add_command(label="🌾 Food Processing, Mills & Bakeries (Dust)", command=lambda: self._load_preset("gen_food_mills"))
+        fire_risk_menu.add_command(label="🛢️ Chemical & Hazmat Storage (COMAH)", command=lambda: self._load_preset("gen_chemical"))
+        fire_risk_menu.add_command(label="🚗 Metal Scrap & Vehicle Dismantlers (ATF)", command=lambda: self._load_preset("gen_scrap"))
+        fire_risk_menu.add_command(label="🚛 Transport & Fleet Operating Depots", command=lambda: self._load_preset("gen_fleet"))
+        fire_risk_menu.add_command(label="🏭 Manufacturing & Industrial Processing", command=lambda: self._load_preset("gen_manufacturing"))
+        fire_risk_menu.add_command(label="⚡ Energy, Biomass & EfW Plants", command=lambda: self._load_preset("gen_energy"))
+        fire_risk_menu.add_command(label="🖥️ Data Centers & Colocation Infrastructure", command=lambda: self._load_preset("gen_datacenters"))
+        templates_menu.add_cascade(label="🔥 High Fire & Smoke Hazard Industries", menu=fire_risk_menu)
+        
+        # Sub-Menu: ♻️ UK Environmental Registers (EA / SEPA / NRW)
+        env_menu = tk.Menu(templates_menu, tearoff=0)
+        env_menu.add_command(label="🏴󠁧󠁢󠁥󠁮󠁧󠁿 EA: Waste Permitting & Operations (England)", command=lambda: self._load_preset("ea_waste_ops"))
+        env_menu.add_command(label="🏴󠁧󠁢󠁥󠁮󠁧󠁿 EA: Waste Carriers, Brokers & Dealers", command=lambda: self._load_preset("ea_waste_carriers"))
+        env_menu.add_command(label="🏴󠁧󠁢󠁳󠁣󠁴󠁿 SEPA: Waste Carriers & Authorisations (Scotland)", command=lambda: self._load_preset("sepa_waste"))
+        env_menu.add_command(label="🏴󠁧󠁢󠁷󠁬󠁳󠁿 NRW: Waste Permitting & Carriers (Wales)", command=lambda: self._load_preset("nrw_waste"))
+        env_menu.add_command(label="🇬🇧 Combined UK Regulators (EA / SEPA / NRW)", command=lambda: self._load_preset("combined_uk_env_registers"))
+        templates_menu.add_cascade(label="♻️ UK Environmental Registers", menu=env_menu)
+        
+        # Sub-Menu: 🛣️ National Highways & Road Network
+        highways_menu = tk.Menu(templates_menu, tearoff=0)
+        highways_menu.add_command(label="🛣️ National Highways Leaders & Project Directors", command=lambda: self._load_preset("national_highways_leaders"))
+        highways_menu.add_command(label="🛣️ National Highways: Schemes, Tenders & Contacts", command=lambda: self._load_preset("national_highways_gov"))
+        highways_menu.add_command(label="🛣️ National Highways & Road Network Depots", command=lambda: self._load_preset("gen_highways"))
+        templates_menu.add_cascade(label="🛣️ National Highways & Roads", menu=highways_menu)
+        
+        # Sub-Menu: 🎯 Targeted Profile & Lead Searches
+        leads_menu = tk.Menu(templates_menu, tearoff=0)
+        leads_menu.add_command(label="🔥 Fire & Rescue IT Leaders (UK)", command=lambda: self._load_preset("fire_it"))
+        leads_menu.add_command(label="🏥 NHS & Healthcare IT Heads", command=lambda: self._load_preset("nhs_it"))
+        leads_menu.add_command(label="🏛️ Local Council & Gov IT Directors", command=lambda: self._load_preset("gov_it"))
+        leads_menu.add_command(label="🚀 Tech Startup Founders / CTOs", command=lambda: self._load_preset("tech_founders"))
+        leads_menu.add_command(label="📦 Procurement & Supply Chain Heads", command=lambda: self._load_preset("procurement"))
+        leads_menu.add_command(label="📧 Public Email Hunter (@gmail/@outlook)", command=lambda: self._load_preset("email_hunter"))
+        templates_menu.add_cascade(label="🎯 Targeted Profile & Lead Searches", menu=leads_menu)
+        
         templates_menu.add_separator()
-        templates_menu.add_command(label="🛣️ National Highways Leaders & Project Directors (UK)", command=lambda: self._load_preset("national_highways_leaders"))
-        templates_menu.add_command(label="🛣️ National Highways: Schemes, Tenders & Contacts", command=lambda: self._load_preset("national_highways_gov"))
-        templates_menu.add_command(label="🛣️ National Highways & Road Network Depots (UK)", command=lambda: self._load_preset("gen_highways"))
-        templates_menu.add_separator()
-        templates_menu.add_command(label="🔥 Fire & Rescue IT Leaders (UK)", command=lambda: self._load_preset("fire_it"))
-        templates_menu.add_command(label="🏥 NHS & Healthcare IT Heads", command=lambda: self._load_preset("nhs_it"))
-        templates_menu.add_command(label="🏛️ Local Council & Gov IT Directors", command=lambda: self._load_preset("gov_it"))
-        templates_menu.add_command(label="🚀 Tech Startup Founders / CTOs", command=lambda: self._load_preset("tech_founders"))
-        templates_menu.add_command(label="📦 Logistics & Distribution Warehouses", command=lambda: self._load_preset("gen_logistics"))
-        templates_menu.add_command(label="🚛 Commercial Transport & Fleet Depots", command=lambda: self._load_preset("gen_fleet"))
+        templates_menu.add_command(label="🔄 Reset to Blank Form", command=self._reset_builder)
         menubar.add_cascade(label="Templates", menu=templates_menu)
 
         # 3. Tools Menu
@@ -1590,11 +1763,19 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         sub_lbl = ttk.Label(banner_left, text="Search Google, Bing, DuckDuckGo, Brave, Yahoo, Tor/Onion with precision Dorks, extract contacts, and export with 1 click.", style="SubHeader.TLabel")
         sub_lbl.pack(anchor=tk.W)
         
-        # Top Banner Quick Action Buttons
+        # Top Banner Quick Action Buttons (Always visible across all tabs and screen sizes)
         banner_right = ttk.Frame(top_banner)
         banner_right.pack(side=tk.RIGHT)
         
-        btn_guide = ttk.Button(banner_right, text="📖 User Guide & Walkthrough", style="Primary.TButton", command=self._open_user_guide_dialog)
+        self.top_search_btn = ttk.Button(banner_right, text="🚀 Search Leads", style="Success.TButton", command=self._start_search)
+        self.top_search_btn.pack(side=tk.RIGHT, padx=(0, 6))
+        ToolTip(self.top_search_btn, "Executes the search query and begins lead extraction immediately.")
+        
+        self.top_stop_btn = ttk.Button(banner_right, text="⏹ Stop", style="Danger.TButton", command=self._stop_search, state=tk.DISABLED)
+        self.top_stop_btn.pack(side=tk.RIGHT, padx=(0, 6))
+        ToolTip(self.top_stop_btn, "Stops the active search operation.")
+        
+        btn_guide = ttk.Button(banner_right, text="📖 User Guide", style="Primary.TButton", command=self._open_user_guide_dialog)
         btn_guide.pack(side=tk.RIGHT, padx=(0, 4))
         ToolTip(btn_guide, "Open the complete interactive beginner's guide, dummy-proof walkthrough, and search strategies.")
 
@@ -1603,7 +1784,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
         
         # Tab 1: Interactive Query Builder
-        self.tab_builder = ttk.Frame(self.notebook, padding="8")
+        self.tab_builder = ttk.Frame(self.notebook, padding="2")
         self.notebook.add(self.tab_builder, text=" 🛠️ Query Builder & Presets ")
         self._build_tab_builder()
         
@@ -1660,9 +1841,54 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
     # TAB 1: QUERY BUILDER
     # -------------------------------------------------------------
     def _build_tab_builder(self):
+        # Scrollable container for Query Builder & Presets tab (Adapts to any screen resolution / window maximize)
+        self.builder_canvas = tk.Canvas(self.tab_builder, bg="#F1F5F9", highlightthickness=0)
+        self.builder_scrollbar = ttk.Scrollbar(self.tab_builder, orient="vertical", command=self.builder_canvas.yview)
+        self.builder_scroll_frame = ttk.Frame(self.builder_canvas, padding="6")
+        
+        self.builder_scroll_frame.bind(
+            "<Configure>",
+            lambda e: self.builder_canvas.configure(scrollregion=self.builder_canvas.bbox("all"))
+        )
+        self.builder_canvas_win = self.builder_canvas.create_window((0, 0), window=self.builder_scroll_frame, anchor="nw")
+        self.builder_canvas.configure(yscrollcommand=self.builder_scrollbar.set)
+        
+        # Auto-expand inner frame to match full canvas width when window is maximized or resized
+        self.builder_canvas.bind("<Configure>", lambda e: self.builder_canvas.itemconfig(self.builder_canvas_win, width=e.width))
+        
+        self.builder_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.builder_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Smooth Mouse Wheel scrolling handlers
+        def _on_builder_mousewheel(event):
+            try:
+                if event.delta:
+                    self.builder_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                elif event.num == 4:
+                    self.builder_canvas.yview_scroll(-1, "units")
+                elif event.num == 5:
+                    self.builder_canvas.yview_scroll(1, "units")
+            except Exception:
+                pass
+
+        def _bind_builder_mousewheel(event=None):
+            self.builder_canvas.bind_all("<MouseWheel>", _on_builder_mousewheel)
+            self.builder_canvas.bind_all("<Button-4>", _on_builder_mousewheel)
+            self.builder_canvas.bind_all("<Button-5>", _on_builder_mousewheel)
+
+        def _unbind_builder_mousewheel(event=None):
+            self.builder_canvas.unbind_all("<MouseWheel>")
+            self.builder_canvas.unbind_all("<Button-4>")
+            self.builder_canvas.unbind_all("<Button-5>")
+
+        self.builder_canvas.bind("<Enter>", _bind_builder_mousewheel)
+        self.builder_canvas.bind("<Leave>", _unbind_builder_mousewheel)
+        self.builder_scroll_frame.bind("<Enter>", _bind_builder_mousewheel)
+        self.builder_scroll_frame.bind("<Leave>", _unbind_builder_mousewheel)
+
         # 1. Search Engine & History Row
-        engine_preset_frame = ttk.LabelFrame(self.tab_builder, text=" 🌐 Search Engine & Template Selector ", padding="8")
-        engine_preset_frame.pack(fill=tk.X, pady=(0, 8))
+        engine_preset_frame = ttk.LabelFrame(self.builder_scroll_frame, text=" 🌐 Search Engine & Template Selector ", padding="8")
+        engine_preset_frame.pack(fill=tk.X, pady=(0, 6))
         
         # Row A: Search Engine & Tor Proxy
         r_eng = ttk.Frame(engine_preset_frame)
@@ -1706,6 +1932,23 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.preset_var = tk.StringVar(value="custom")
         presets = [
             ("-- Clean / Blank Form --", "custom"),
+            ("--- 🔥 HIGH FIRE & SMOKE HAZARD MULTI-SITE INDUSTRIES ---", "header_fire"),
+            ("♻️ Materials Recovery & Waste Facilities (UK)", "gen_waste"),
+            ("🧴 Plastics Recycling & Polymer Reprocessing", "gen_plastics"),
+            ("🪵 Wood, Timber & Paper Recycling", "gen_wood_paper"),
+            ("🌾 Farms, Agriculture & Grain Silos", "gen_farms"),
+            ("📦 Warehouse Management & 3PL Logistics", "gen_warehouses"),
+            ("🏗️ Outside Storage & Open Yard Storage", "gen_outside_storage"),
+            ("🛞 Tyre Recycling & Rubber Pyrolysis", "gen_tyres"),
+            ("🔋 Battery Storage (BESS) & Lithium-Ion", "gen_batteries"),
+            ("🧵 Textiles, Fabric & Rag Baling", "gen_textiles"),
+            ("🌾 Food Processing, Mills & Bakeries (Dust)", "gen_food_mills"),
+            ("🛢️ Chemical & Hazmat Storage (COMAH)", "gen_chemical"),
+            ("🚗 Metal Scrap & Vehicle Dismantlers (ATF)", "gen_scrap"),
+            ("🚛 Commercial Transport & Fleet Depots", "gen_fleet"),
+            ("🏭 Manufacturing & Industrial Processing", "gen_manufacturing"),
+            ("⚡ Energy, Biomass & EfW Plants", "gen_energy"),
+            ("🖥️ Data Centers & Colocation Infrastructure", "gen_datacenters"),
             ("--- ♻️ UK ENVIRONMENTAL REGISTERS (EA / SEPA / NRW) ---", "header_env"),
             ("🏴󠁧󠁢󠁥󠁮󠁧󠁿 EA: Waste Permitting & Operations (England)", "ea_waste_ops"),
             ("🏴󠁧󠁢󠁥󠁮󠁧󠁿 EA: Waste Carriers, Brokers & Dealers", "ea_waste_carriers"),
@@ -1714,31 +1957,22 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             ("🇬🇧 Combined UK Regulators (EA / SEPA / NRW)", "combined_uk_env_registers"),
             ("🛣️ National Highways Leaders & Project Directors (UK)", "national_highways_leaders"),
             ("🛣️ National Highways: Schemes, Tenders & Contacts", "national_highways_gov"),
-            ("--- 🎯 TARGETED PROFILE / SITE TEMPLATES ---", "header1"),
-            ("Fire & Rescue IT Leaders (UK)", "fire_it"),
-            ("NHS & Healthcare IT Heads", "nhs_it"),
-            ("Local Council & Gov IT Directors", "gov_it"),
-            ("Tech Startup Founders / CTOs", "tech_founders"),
-            ("Procurement & Supply Chain Heads", "procurement"),
-            ("Public Email Hunter (@gmail/@outlook)", "email_hunter"),
-            ("Developer Code Solutions (StackOverflow/GitHub)", "dev_code"),
-            ("Recent Tech Tutorials (after:2023)", "recent_tutorials"),
-            ("Official Documentation (MDN/Microsoft)", "official_docs"),
-            ("Open Directory Search (Index of /)", "index_of"),
-            ("Confidential Salary & Budgets", "confidential_docs"),
-            ("Server Configs & Exposed FTP", "server_configs"),
-            ("Price/Number Range ($100..$500)", "number_range"),
-            ("PDF Resumes & CVs", "resumes"),
-            ("--- 🌐 GENERALIZED INDUSTRY & FACILITY SEARCHES ---", "header2"),
-            ("♻️ Materials Recovery & Waste Facilities (UK)", "gen_waste"),
             ("🛣️ National Highways & Road Network Depots (UK)", "gen_highways"),
-            ("📦 Logistics & Distribution Warehouses", "gen_logistics"),
-            ("🚛 Commercial Transport & Fleet Depots", "gen_fleet"),
-            ("🏭 Manufacturing & Industrial Processing", "gen_manufacturing"),
-            ("⚡ Energy, Biomass & EfW Plants", "gen_energy"),
-            ("🖥️ Data Centers & Colocation Infrastructure", "gen_datacenters"),
-            ("🛢️ Chemical & Hazardous Storage (COMAH)", "gen_chemical"),
-            ("🏗️ Scrap Metal & Reprocessing Yards", "gen_scrap")
+            ("--- 🎯 TARGETED PROFILE / LEAD TEMPLATES ---", "header1"),
+            ("🔥 Fire & Rescue IT Leaders (UK)", "fire_it"),
+            ("🏥 NHS & Healthcare IT Heads", "nhs_it"),
+            ("🏛️ Local Council & Gov IT Directors", "gov_it"),
+            ("🚀 Tech Startup Founders / CTOs", "tech_founders"),
+            ("📦 Procurement & Supply Chain Heads", "procurement"),
+            ("📧 Public Email Hunter (@gmail/@outlook)", "email_hunter"),
+            ("💻 Developer Code Solutions (StackOverflow/GitHub)", "dev_code"),
+            ("📚 Recent Tech Tutorials (after:2023)", "recent_tutorials"),
+            ("📄 Official Documentation (MDN/Microsoft)", "official_docs"),
+            ("📂 Open Directory Search (Index of /)", "index_of"),
+            ("🔒 Confidential Salary & Budgets", "confidential_docs"),
+            ("⚙️ Server Configs & Exposed FTP", "server_configs"),
+            ("💲 Price/Number Range ($100..$500)", "number_range"),
+            ("📑 PDF Resumes & CVs", "resumes")
         ]
         
         self.preset_combo = ttk.Combobox(r_pre, values=[p[0] for p in presets], state="readonly", width=48)
@@ -1761,8 +1995,8 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         ToolTip(self.history_combo, "Select any past logged search query to recall it directly into the builder.")
 
         # 2. Builder Form Panes - Tabbed Criteria Selector
-        self.criteria_frame = ttk.LabelFrame(self.tab_builder, text=" 🎯 Search Criteria & Strategy Selector ", padding="6")
-        self.criteria_frame.pack(fill=tk.X, pady=(0, 8))
+        self.criteria_frame = ttk.LabelFrame(self.builder_scroll_frame, text=" 🎯 Search Criteria & Strategy Selector ", padding="6")
+        self.criteria_frame.pack(fill=tk.X, pady=(0, 6))
         
         self.criteria_notebook = ttk.Notebook(self.criteria_frame, style="Sub.TNotebook")
         self.criteria_notebook.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
@@ -1780,8 +2014,8 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.criteria_notebook.bind("<<NotebookTabChanged>>", self._on_criteria_tab_changed)
 
         # 3. Live Assembled Dork Preview Box
-        query_preview_frame = ttk.LabelFrame(self.tab_builder, text=" Live Assembled Search Query (Auto-Generated) ", padding="8")
-        query_preview_frame.pack(fill=tk.X, pady=(0, 8))
+        query_preview_frame = ttk.LabelFrame(self.builder_scroll_frame, text=" Live Assembled Search Query (Auto-Generated) ", padding="8")
+        query_preview_frame.pack(fill=tk.X, pady=(0, 6))
         
         self.assembled_query_var = tk.StringVar()
         self.query_preview_entry = ttk.Entry(query_preview_frame, textvariable=self.assembled_query_var, font=("Consolas", 10, "bold"), foreground="#1E293B")
@@ -1804,7 +2038,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         lbl_hint_live.pack(side=tk.LEFT)
         
         # 4. Search Execution Controls
-        exec_frame = ttk.LabelFrame(self.tab_builder, text=" Search Execution Controls ", padding="10")
+        exec_frame = ttk.LabelFrame(self.builder_scroll_frame, text=" Search Execution Controls ", padding="10")
         exec_frame.pack(fill=tk.X, pady=(0, 4))
         
         # Row 1: Parameters & Browser Window Mode
@@ -2076,13 +2310,21 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.gen_category_combo = ttk.Combobox(r1, values=[
             "Choose Preset Category...",
             "♻️ Materials Recovery & Waste Facilities",
-            "📦 Logistics & Distribution Warehouses",
+            "🧴 Plastics Recycling & Polymer Processing",
+            "🪵 Wood, Timber & Paper Recycling",
+            "🌾 Farms, Agriculture & Grain Silos",
+            "📦 Warehouse Management & 3PL Logistics",
+            "🏗️ Outside Storage & Open Yard Storage",
+            "🛞 Tyre Recycling & Rubber Pyrolysis",
+            "🔋 Battery Storage (BESS) & Lithium-Ion",
+            "🧵 Textiles, Fabric & Rag Baling",
+            "🌾 Food Processing, Mills & Bakeries (Dust)",
+            "🛢️ Chemical & Hazmat Storage (COMAH)",
+            "🚗 Metal Scrap & Vehicle Dismantlers (ATF)",
             "🚛 Transport & Fleet Operating Depots",
             "🏭 Industrial Manufacturing & Processing",
             "⚡ Energy, Biomass & EfW Plants",
-            "🖥️ Data Centers & Colocation Facilities",
-            "🛢️ Chemical & Hazardous Storage (COMAH)",
-            "🏗️ Metal Recycling & Scrap Yards",
+            "🖥️ Data Centers & Colocation Infrastructure",
             "(Clear Category)"
         ], state="readonly", width=38)
         self.gen_category_combo.current(0)
@@ -5489,6 +5731,28 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         new_q = f"{current}{operator_snippet}" if current else operator_snippet.strip()
         self.assembled_query_var.set(new_q)
 
+    def _on_engine_selected(self, event=None):
+        """Updates active engine variable and status bar when a search engine is selected from dropdown."""
+        val = self.engine_combo.get() if hasattr(self, "engine_combo") else ""
+        if "Google" in val:
+            engine = "Google"
+        elif "Bing" in val:
+            engine = "Bing"
+        elif "DuckDuckGo" in val:
+            engine = "DuckDuckGo"
+        elif "Brave" in val:
+            engine = "Brave"
+        elif "Yahoo" in val:
+            engine = "Yahoo"
+        elif "Ahmia" in val:
+            engine = "Ahmia"
+        elif "Yandex" in val:
+            engine = "Yandex"
+        else:
+            engine = "Google"
+        self.engine_var.set(engine)
+        self.status_var.set(f"🌐 Search Engine Selected: {engine}. Ready to search.")
+
     def _on_criteria_tab_changed(self, event=None):
         """Switches active criteria mode and updates assembled query when switching subtabs."""
         try:
@@ -5506,8 +5770,28 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         val = self.gen_category_combo.get()
         if "Materials Recovery & Waste" in val:
             self.gen_industry_var.set('("Materials Recovery Facility" OR "waste transfer station" OR "commercial recycling facility")')
-        elif "Logistics & Distribution" in val:
-            self.gen_industry_var.set('("distribution centre" OR "fulfilment centre" OR "logistics hub" OR "warehouse depot")')
+        elif "Plastics Recycling" in val:
+            self.gen_industry_var.set('("plastics recycling" OR "polymer reprocessing" OR "plastic granulate" OR "plastic waste processing" OR "polymer recycling")')
+        elif "Wood, Timber & Paper" in val:
+            self.gen_industry_var.set('("wood recycling" OR "timber processing" OR "paper mill" OR "cardboard recycling" OR "biomass wood chip")')
+        elif "Farms, Agriculture" in val:
+            self.gen_industry_var.set('("grain drying" OR "agricultural storage" OR "grain silo" OR "farming estate" OR "straw storage" OR "grain store")')
+        elif "Warehouse Management" in val or "Logistics & Distribution" in val:
+            self.gen_industry_var.set('("warehouse management" OR "3PL fulfillment" OR "logistics distribution centre" OR "bonded warehouse" OR "bulk storage warehouse")')
+        elif "Outside Storage" in val:
+            self.gen_industry_var.set('("outside storage" OR "open yard storage" OR "bulk materials storage" OR "aggregate storage yard" OR "pallet storage depot")')
+        elif "Tyre Recycling" in val:
+            self.gen_industry_var.set('("tyre recycling" OR "tire processing" OR "rubber crumb" OR "pyrolysis plant" OR "retreading depot")')
+        elif "Battery Storage" in val:
+            self.gen_industry_var.set('("battery energy storage" OR "BESS facility" OR "lithium battery recycling" OR "battery storage facility" OR "grid battery site")')
+        elif "Textiles, Fabric" in val:
+            self.gen_industry_var.set('("textile recycling" OR "rag processing" OR "clothing baling" OR "fabric reprocessing" OR "fibre recycling")')
+        elif "Food Processing, Mills" in val:
+            self.gen_industry_var.set('("flour mill" OR "industrial bakery" OR "food processing plant" OR "feed mill" OR "grain milling")')
+        elif "Chemical & Hazmat" in val or "Chemical & Hazardous" in val:
+            self.gen_industry_var.set('("chemical storage" OR "COMAH site" OR "bulk liquid terminal" OR "hazardous substances" OR "solvents storage")')
+        elif "Metal Scrap" in val or "Metal Recycling" in val:
+            self.gen_industry_var.set('("scrap metal yard" OR "metal recycling facility" OR "authorised treatment facility" OR "ATF depollution" OR "car dismantler")')
         elif "Transport & Fleet" in val:
             self.gen_industry_var.set('("fleet depot" OR "transport depot" OR "haulage depot" OR "operating centre")')
         elif "Industrial Manufacturing" in val:
@@ -5516,10 +5800,6 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             self.gen_industry_var.set('("energy from waste" OR "biomass plant" OR "anaerobic digestion" OR "EfW facility")')
         elif "Data Centers" in val:
             self.gen_industry_var.set('("data centre" OR "server farm" OR "colocation facility" OR "telecoms exchange")')
-        elif "Chemical & Hazardous" in val:
-            self.gen_industry_var.set('("chemical storage" OR "COMAH site" OR "bulk fuel terminal" OR "hazmat facility")')
-        elif "Metal Recycling" in val:
-            self.gen_industry_var.set('("scrap metal yard" OR "metal recycling" OR "plastics reprocessing" OR "circular economy facility")')
         elif "Clear" in val:
             self.gen_industry_var.set("")
         self._rebuild_query()
@@ -5771,10 +6051,43 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
 
     def _on_preset_selected(self, event=None):
         combo_val = self.preset_combo.get()
-        if "TARGETED" in combo_val or "GENERALIZED" in combo_val or "ENVIRONMENTAL" in combo_val:
+        if "TARGETED" in combo_val or "GENERALIZED" in combo_val or "ENVIRONMENTAL" in combo_val or "FIRE & SMOKE" in combo_val:
             return
         if "Clean / Blank" in combo_val:
             self._reset_builder()
+        # High Fire & Smoke Hazard Generalized Multi-Site Industries
+        elif "Materials Recovery" in combo_val:
+            self._load_preset("gen_waste")
+        elif "Plastics Recycling" in combo_val:
+            self._load_preset("gen_plastics")
+        elif "Wood, Timber & Paper" in combo_val:
+            self._load_preset("gen_wood_paper")
+        elif "Farms, Agriculture" in combo_val:
+            self._load_preset("gen_farms")
+        elif "Warehouse Management" in combo_val or "Logistics & Distribution" in combo_val:
+            self._load_preset("gen_warehouses")
+        elif "Outside Storage" in combo_val:
+            self._load_preset("gen_outside_storage")
+        elif "Tyre Recycling" in combo_val:
+            self._load_preset("gen_tyres")
+        elif "Battery Storage" in combo_val:
+            self._load_preset("gen_batteries")
+        elif "Textiles, Fabric" in combo_val:
+            self._load_preset("gen_textiles")
+        elif "Food Processing, Mills" in combo_val:
+            self._load_preset("gen_food_mills")
+        elif "Chemical & Hazmat" in combo_val or "Chemical & Hazardous" in combo_val:
+            self._load_preset("gen_chemical")
+        elif "Metal Scrap" in combo_val or "Scrap Metal" in combo_val:
+            self._load_preset("gen_scrap")
+        elif "Commercial Transport" in combo_val or "Transport & Fleet" in combo_val:
+            self._load_preset("gen_fleet")
+        elif "Manufacturing & Industrial" in combo_val or "Industrial Manufacturing" in combo_val:
+            self._load_preset("gen_manufacturing")
+        elif "Energy, Biomass" in combo_val:
+            self._load_preset("gen_energy")
+        elif "Data Centers" in combo_val:
+            self._load_preset("gen_datacenters")
         # UK Environmental Registers (EA / SEPA / NRW)
         elif "EA: Waste Permitting" in combo_val:
             self._load_preset("ea_waste_ops")
@@ -5821,23 +6134,6 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             self._load_preset("number_range")
         elif "PDF Resumes" in combo_val:
             self._load_preset("resumes")
-        # Generalized Presets (Tab 2)
-        elif "Materials Recovery" in combo_val:
-            self._load_preset("gen_waste")
-        elif "Logistics & Distribution" in combo_val:
-            self._load_preset("gen_logistics")
-        elif "Commercial Transport" in combo_val:
-            self._load_preset("gen_fleet")
-        elif "Manufacturing & Industrial" in combo_val:
-            self._load_preset("gen_manufacturing")
-        elif "Energy, Biomass" in combo_val:
-            self._load_preset("gen_energy")
-        elif "Data Centers" in combo_val:
-            self._load_preset("gen_datacenters")
-        elif "Chemical & Hazardous" in combo_val:
-            self._load_preset("gen_chemical")
-        elif "Scrap Metal" in combo_val:
-            self._load_preset("gen_scrap")
         else:
             self._reset_builder()
 
@@ -5883,6 +6179,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
 
         self._updating_query = False
         self._rebuild_query()
+        self.status_var.set(f"Loaded search template: {preset_key.replace('_', ' ').title()}")
 
     def _load_custom_dork(self, dork_string):
         """Directly loads a full dork string from cheat sheet and switches to builder."""
@@ -6157,7 +6454,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             
             combined_text = f"{raw_title} {snippet}"
             emails = EMAIL_PATTERN.findall(combined_text)
-            phones = PHONE_PATTERN.findall(combined_text)
+            phones = extract_phones_from_soup_or_text(text=combined_text)
             
             # Check if this lead is a LinkedIn profile vs an Open-Web / Corporate / Facility result
             is_linkedin = "linkedin.com/in/" in href or " - LinkedIn" in raw_title or " | LinkedIn" in raw_title
@@ -6355,6 +6652,10 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         
         self.search_btn.configure(state=tk.DISABLED)
         self.stop_btn.configure(state=tk.NORMAL)
+        if hasattr(self, "top_search_btn"):
+            self.top_search_btn.configure(state=tk.DISABLED)
+        if hasattr(self, "top_stop_btn"):
+            self.top_stop_btn.configure(state=tk.NORMAL)
         
         # Switch to results tab automatically
         self.notebook.select(self.tab_results)
@@ -6392,6 +6693,10 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             self._append_log("\n⏹ Search stopped by user.\n")
             self.search_btn.configure(state=tk.NORMAL)
             self.stop_btn.configure(state=tk.DISABLED)
+            if hasattr(self, "top_search_btn"):
+                self.top_search_btn.configure(state=tk.NORMAL)
+            if hasattr(self, "top_stop_btn"):
+                self.top_stop_btn.configure(state=tk.DISABLED)
             self._hide_search_progress()
             
             d = self.driver
@@ -6659,6 +6964,10 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.is_running = False
         self.search_btn.configure(state=tk.NORMAL)
         self.stop_btn.configure(state=tk.DISABLED)
+        if hasattr(self, "top_search_btn"):
+            self.top_search_btn.configure(state=tk.NORMAL)
+        if hasattr(self, "top_stop_btn"):
+            self.top_stop_btn.configure(state=tk.DISABLED)
         self._hide_search_progress()
         
         count = len(self.results_data)

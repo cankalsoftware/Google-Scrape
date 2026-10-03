@@ -56,10 +56,18 @@ def init_db():
                         timestamp TEXT NOT NULL,
                         engine TEXT NOT NULL,
                         query TEXT NOT NULL,
-                        leads_count INTEGER DEFAULT 0
+                        leads_count INTEGER DEFAULT 0,
+                        search_type TEXT DEFAULT 'generalized'
                     );
                 """)
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_history_timestamp ON search_history(timestamp DESC);")
+
+                # Auto-migrate schema: ensure search_type column exists
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(search_history);")
+                columns = [row["name"] for row in cursor.fetchall()]
+                if "search_type" not in columns:
+                    cursor.execute("ALTER TABLE search_history ADD COLUMN search_type TEXT DEFAULT 'generalized';")
 
                 # 3. Saved Leads Persistent Storage Table
                 conn.execute("""
@@ -141,34 +149,37 @@ def set_cached_mx(domain: str, has_mx: bool, is_catchall: bool, mx_host: str = "
 # ---------------------------------------------------------------------------
 # SEARCH HISTORY LOGGING
 # ---------------------------------------------------------------------------
-def log_search_query(engine: str, query: str, leads_count: int = 0):
-    """Logs a search query execution with timestamp and lead count."""
+def log_search_query(engine: str, query: str, leads_count: int = 0, search_type: str = "generalized"):
+    """Logs a search query execution with timestamp, engine, query, leads count, and search type."""
     if not query or not query.strip():
         return
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st = str(search_type or "generalized").lower().strip()
+    if st not in ["targeted", "generalized"]:
+        st = "targeted" if "site:" in query.lower() else "generalized"
 
     with _DB_LOCK:
         conn = get_db_connection()
         try:
             with conn:
                 conn.execute("""
-                    INSERT INTO search_history (timestamp, engine, query, leads_count)
-                    VALUES (?, ?, ?, ?);
-                """, (ts, str(engine), str(query).strip(), int(leads_count)))
+                    INSERT INTO search_history (timestamp, engine, query, leads_count, search_type)
+                    VALUES (?, ?, ?, ?, ?);
+                """, (ts, str(engine), str(query).strip(), int(leads_count), st))
         except Exception:
             pass
         finally:
             conn.close()
 
 
-def get_search_history(limit: int = 150) -> list:
+def get_search_history(limit: int = 250) -> list:
     """Retrieves the most recent search queries ordered by timestamp descending."""
     with _DB_LOCK:
         conn = get_db_connection()
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT timestamp, engine, query, leads_count
+                SELECT timestamp, engine, query, leads_count, COALESCE(search_type, 'generalized') as search_type
                 FROM search_history
                 ORDER BY id DESC
                 LIMIT ?;

@@ -1656,6 +1656,10 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.style.configure("Operator.TButton", font=("Consolas", 8, "bold"), background="#E0E7FF", foreground="#3730A3", borderwidth=0, padding=3)
         self.style.map("Operator.TButton", background=[("active", "#C7D2FE")])
 
+        # Recalled Query Feedback Styles
+        self.style.configure("RecalledSuccess.TEntry", fieldbackground="#DCFCE7", foreground="#065F46")
+        self.style.configure("RecalledNotice.TLabel", font=("Segoe UI", 9, "bold"), foreground="#059669", background="#F1F5F9")
+
     def _build_ui(self):
         # --- Native Application Menu Bar ---
         menubar = tk.Menu(self)
@@ -2019,9 +2023,12 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         
         self.assembled_query_var = tk.StringVar()
         self.query_preview_entry = ttk.Entry(query_preview_frame, textvariable=self.assembled_query_var, font=("Consolas", 10, "bold"), foreground="#1E293B")
-        self.query_preview_entry.pack(fill=tk.X, pady=(0, 5))
+        self.query_preview_entry.pack(fill=tk.X, pady=(0, 4))
         self.query_preview_entry.bind("<Return>", lambda event: self._start_search())
         ToolTip(self.query_preview_entry, "This query updates in real-time as you edit form fields above. You can also edit it directly here.")
+        
+        self.recalled_notice_lbl = ttk.Label(query_preview_frame, text="", style="RecalledNotice.TLabel")
+        self.recalled_notice_lbl.pack(anchor=tk.W, pady=(0, 4))
         
         preview_btn_bar = ttk.Frame(query_preview_frame)
         preview_btn_bar.pack(fill=tk.X)
@@ -3162,17 +3169,22 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self._refresh_history_listbox()
 
     # -------------------------------------------------------------
-    # HISTORY LOGGING & RECALL ENGINE
+    # HISTORY LOGGING & RECALL ENGINE (SQLITE ACID STORAGE)
     # -------------------------------------------------------------
     def _load_search_history(self):
         """Loads search query history lines from SQLite storage with file fallback."""
         history = []
-        db_entries = storage.get_search_history(150)
-        if db_entries:
-            for item in db_entries:
-                entry_str = f"[{item.get('timestamp', '')}] [{item.get('engine', 'Google')}] {item.get('query', '')}"
-                history.append(entry_str)
-            return history
+        try:
+            db_entries = storage.get_search_history(250)
+            if db_entries:
+                for item in db_entries:
+                    st = item.get("search_type", "generalized")
+                    tag = "TAB1: TARGETED" if st == "targeted" else "TAB2: GENERALIZED"
+                    entry_str = f"[{item.get('timestamp', '')}] [{item.get('engine', 'Google')}] [{tag}] {item.get('query', '')}"
+                    history.append(entry_str)
+                return history
+        except Exception:
+            pass
 
         if os.path.exists(HISTORY_LOG_FILE):
             try:
@@ -3181,16 +3193,40 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                         line = line.strip()
                         if line:
                             history.append(line)
+                            # Migrate unlogged file entries into SQLite database
+                            engine, st_type, q = self._extract_query_from_log_entry(line)
+                            storage.log_search_query(engine, q, 0, st_type)
             except Exception:
                 pass
         return history
 
     def _log_search_query(self, engine, query):
-        """Appends an executed search query to the persistent log file."""
+        """Appends an executed search query to SQLite persistent storage, in-memory history, and log file."""
+        if not query or not query.strip():
+            return
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        entry = f"[{timestamp}] [{engine}] {query}"
+        st = getattr(self, "active_criteria_mode", "generalized")
+        tag = "TAB1: TARGETED" if st == "targeted" else "TAB2: GENERALIZED"
+        clean_q = query.strip()
+        
+        # 1. Store in ACID-safe SQLite Database
+        try:
+            storage.log_search_query(
+                engine=engine,
+                query=clean_q,
+                leads_count=len(getattr(self, "results_data", [])),
+                search_type=st
+            )
+        except Exception:
+            pass
+            
+        # 2. Update in-memory search history
+        entry = f"[{timestamp}] [{engine}] [{tag}] {clean_q}"
+        # Deduplicate identical recent queries in display
+        self.search_history = [x for x in self.search_history if not x.endswith(clean_q)]
         self.search_history.insert(0, entry)
         
+        # 3. Append to flat log file for fallback redundancy
         try:
             with open(HISTORY_LOG_FILE, "a", encoding="utf-8") as f:
                 f.write(entry + "\n")
@@ -3203,7 +3239,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
     def _refresh_history_combo(self):
         """Refreshes the history combobox dropdown in Tab 1."""
         display_vals = []
-        for item in self.search_history[:25]:
+        for item in self.search_history[:35]:
             display_vals.append(item)
         if hasattr(self, "history_combo"):
             self.history_combo['values'] = display_vals
@@ -3211,7 +3247,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                 self.history_combo.current(0)
 
     def _refresh_history_listbox(self):
-        """Refreshes the history listbox in Tab 4 with search filter support."""
+        """Refreshes the history listbox in Tab 6 with search filter support."""
         if not hasattr(self, "history_listbox"):
             return
         filt = self.hist_filter_var.get().lower().strip() if hasattr(self, "hist_filter_var") else ""
@@ -3221,18 +3257,273 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                 self.history_listbox.insert(tk.END, item)
 
     def _extract_query_from_log_entry(self, log_entry):
-        """Extracts engine and query string from formatted log entry: [2026-09-25 15:30:00] [Google] query..."""
-        m = re.match(r'\[.*?\]\s*\[(.*?)\]\s*(.*)', log_entry)
-        if m:
-            return m.group(1), m.group(2)
-        return "Google", log_entry
+        """Extracts engine, search_type, and query string from formatted log entry."""
+        if not log_entry:
+            return "Google", "generalized", ""
+        
+        # Format 1: [2026-10-03 06:50:00] [Google] [TAB1: TARGETED] query...
+        m3 = re.match(r'\[.*?\]\s*\[(.*?)\]\s*\[(.*?)\]\s*(.*)', log_entry)
+        if m3:
+            engine = m3.group(1).strip()
+            type_tag = m3.group(2).strip().lower()
+            query = m3.group(3).strip()
+            search_type = "targeted" if ("target" in type_tag or "tab1" in type_tag) else "generalized"
+            return engine, search_type, query
+
+        # Format 2: [2026-09-25 15:30:00] [Google] query...
+        m2 = re.match(r'\[.*?\]\s*\[(.*?)\]\s*(.*)', log_entry)
+        if m2:
+            engine = m2.group(1).strip()
+            query = m2.group(2).strip()
+            # Heuristic detection for older entries
+            q_lower = query.lower()
+            if "site:linkedin.com" in q_lower or "site:github.com" in q_lower or "site:environment.data.gov.uk" in q_lower or q_lower.startswith("site:"):
+                search_type = "targeted"
+            else:
+                search_type = "generalized"
+            return engine, search_type, query
+
+        return "Google", "generalized", log_entry.strip()
+
+    def _deconstruct_and_populate_query(self, query: str, search_type: str = "targeted"):
+        """
+        Deconstructs a raw recalled query string and populates the individual
+        input fields of Tab 1 (Targeted) or Tab 2 (Generalized).
+        """
+        self._updating_query = True
+        try:
+            if search_type == "targeted":
+                self.active_criteria_mode = "targeted"
+                self.criteria_notebook.select(self.subtab_targeted)
+                
+                # Reset targeted fields before populating
+                self.site_preset_var.set("")
+                self.org_var.set("")
+                self.titles_var.set("")
+                self.location_var.set("")
+                self.email_dork_var.set(False)
+                self.custom_email_domain_var.set("")
+                self.phone_dork_var.set(False)
+                self.exclude_var.set("")
+                self.filetype_var.set("None")
+                
+                working_q = query.strip()
+                
+                # 1. Filetype: filetype:...
+                ft_match = re.search(r'(?:filetype:[a-zA-Z0-9]+(?:\s+OR\s+filetype:[a-zA-Z0-9]+)*)', working_q, re.IGNORECASE)
+                if ft_match:
+                    self.filetype_var.set(ft_match.group(0).strip())
+                    working_q = working_q[:ft_match.start()] + " " + working_q[ft_match.end():]
+                    
+                # 2. Target Site: site:...
+                site_match = re.search(r'\((?:site:[^\)]+)\)|site:[^\s()]+(?:\s+OR\s+site:[^\s()]+)*', working_q, re.IGNORECASE)
+                if site_match:
+                    self.site_preset_var.set(site_match.group(0).strip())
+                    working_q = working_q[:site_match.start()] + " " + working_q[site_match.end():]
+                    
+                # 3. Negative Exclusions: -keyword
+                ex_tokens = re.findall(r'(?:^|\s)(-[^\s]+)', working_q)
+                if ex_tokens:
+                    self.exclude_var.set(" ".join(t.strip() for t in ex_tokens))
+                    for t in ex_tokens:
+                        working_q = re.sub(r'(?:^|\s)' + re.escape(t) + r'(?=\s|$)', ' ', working_q)
+                        
+                # 4. Public Email dork
+                if re.search(r'@(?:gmail|outlook|yahoo|hotmail)\.com', working_q, re.IGNORECASE):
+                    self.email_dork_var.set(True)
+                    working_q = re.sub(r'\([^\)]*@(?:gmail|outlook|yahoo|hotmail)\.com[^\)]*\)', ' ', working_q, flags=re.IGNORECASE)
+                    working_q = re.sub(r'"@(?:gmail|outlook|yahoo|hotmail)\.com"', ' ', working_q, flags=re.IGNORECASE)
+                    
+                # Custom domain dork: "@acme.com"
+                custom_dom_match = re.search(r'"@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"', working_q)
+                if custom_dom_match:
+                    self.custom_email_domain_var.set(custom_dom_match.group(1))
+                    working_q = working_q[:custom_dom_match.start()] + " " + working_q[custom_dom_match.end():]
+                    
+                # 5. Phone dork
+                if re.search(r'\([^\)]*(?:"phone"|"tel"|"mobile"|"contact")[^\)]*\)', working_q, re.IGNORECASE):
+                    self.phone_dork_var.set(True)
+                    working_q = re.sub(r'\([^\)]*(?:"phone"|"tel"|"mobile"|"contact")[^\)]*\)', ' ', working_q, flags=re.IGNORECASE)
+                    
+                # 6. Location
+                loc_pattern = r'("United Kingdom"|"London"|"Greater London"|"Manchester"|"Birmingham"|"Leeds"|"United States"|"Canada"|"Australia"|"Europe"|"England"|"Scotland"|"Wales"|"Northern Ireland")'
+                loc_matches = re.findall(loc_pattern, working_q, re.IGNORECASE)
+                if loc_matches:
+                    self.location_var.set(loc_matches[0])
+                    for lm in loc_matches:
+                        working_q = working_q.replace(lm, ' ')
+                        
+                # 7. Remaining groups -> Org vs Titles
+                bracketed = re.findall(r'\(([^)]+)\)', working_q)
+                for b in bracketed:
+                    working_q = working_q.replace(f"({b})", " ")
+                    
+                quotes = re.findall(r'"([^"]+)"', working_q)
+                for q in quotes:
+                    working_q = working_q.replace(f'"{q}"', " ")
+                    
+                rem_tokens = [t.strip() for t in working_q.split() if t.strip()]
+                
+                phrases = []
+                for b in bracketed:
+                    phrases.append(f"({b})" if " OR " in b else b)
+                for q in quotes:
+                    phrases.append(f'"{q}"')
+                if rem_tokens:
+                    phrases.append(" ".join(rem_tokens))
+                    
+                role_keywords = ["manager", "director", "officer", "head of", "lead", "engineer", "chief", "executive", "vp", "supervisor", "coordinator", "specialist", "worker"]
+                
+                for phrase in phrases:
+                    p_lower = phrase.lower()
+                    if any(rk in p_lower for rk in role_keywords):
+                        if not self.titles_var.get():
+                            self.titles_var.set(phrase)
+                        else:
+                            self.titles_var.set(self.titles_var.get() + f" {phrase}")
+                    else:
+                        if not self.org_var.get():
+                            self.org_var.set(phrase)
+                        elif not self.titles_var.get():
+                            self.titles_var.set(phrase)
+                        elif not self.location_var.get():
+                            self.location_var.set(phrase)
+                        else:
+                            self.org_var.set(self.org_var.get() + f" {phrase}")
+                            
+            else:
+                # GENERALIZED SEARCH MODE (Tab 2)
+                self.active_criteria_mode = "generalized"
+                self.criteria_notebook.select(self.subtab_generalized)
+                
+                # Reset generalized fields before populating
+                self.gen_industry_var.set("")
+                self.gen_scale_var.set("")
+                self.gen_geo_var.set("")
+                self.gen_exclude_var.set("")
+                self.gen_intext_var.set("")
+                self.gen_inurl_var.set("")
+                self.gen_site_var.set("")
+                self.gen_filetype_var.set("None")
+                self.gen_email_dork_var.set(False)
+                self.gen_phone_dork_var.set(False)
+                
+                working_q = query.strip()
+                
+                # 1. Filetype
+                ft_match = re.search(r'(?:filetype:[a-zA-Z0-9]+(?:\s+OR\s+filetype:[a-zA-Z0-9]+)*)', working_q, re.IGNORECASE)
+                if ft_match:
+                    self.gen_filetype_var.set(ft_match.group(0).strip())
+                    working_q = working_q[:ft_match.start()] + " " + working_q[ft_match.end():]
+                    
+                # 2. intext
+                intext_match = re.search(r'intext:(?:"([^"]+)"|(\S+))', working_q, re.IGNORECASE)
+                if intext_match:
+                    self.gen_intext_var.set((intext_match.group(1) or intext_match.group(2)).strip())
+                    working_q = working_q[:intext_match.start()] + " " + working_q[intext_match.end():]
+                    
+                # 3. inurl
+                inurl_match = re.search(r'inurl:(?:"([^"]+)"|(\S+))', working_q, re.IGNORECASE)
+                if inurl_match:
+                    self.gen_inurl_var.set((inurl_match.group(1) or inurl_match.group(2)).strip())
+                    working_q = working_q[:inurl_match.start()] + " " + working_q[inurl_match.end():]
+                    
+                # 4. site
+                site_match = re.search(r'site:[^\s()]+', working_q, re.IGNORECASE)
+                if site_match:
+                    self.gen_site_var.set(site_match.group(0).strip())
+                    working_q = working_q[:site_match.start()] + " " + working_q[site_match.end():]
+                    
+                # 5. Negative Exclusions
+                ex_tokens = re.findall(r'(?:^|\s)(-[^\s]+)', working_q)
+                if ex_tokens:
+                    self.gen_exclude_var.set(" ".join(t.strip() for t in ex_tokens))
+                    for t in ex_tokens:
+                        working_q = re.sub(r'(?:^|\s)' + re.escape(t) + r'(?=\s|$)', ' ', working_q)
+                        
+                # 6. Email hunting
+                if re.search(r'@(?:gmail|outlook|yahoo|hotmail)\.com', working_q, re.IGNORECASE):
+                    self.gen_email_dork_var.set(True)
+                    working_q = re.sub(r'\([^\)]*@(?:gmail|outlook|yahoo|hotmail)\.com[^\)]*\)', ' ', working_q, flags=re.IGNORECASE)
+                    working_q = re.sub(r'"@(?:gmail|outlook|yahoo|hotmail)\.com"', ' ', working_q, flags=re.IGNORECASE)
+                    
+                # 7. Phone hunting
+                if re.search(r'\([^\)]*(?:"phone"|"tel"|"mobile"|"contact")[^\)]*\)', working_q, re.IGNORECASE):
+                    self.gen_phone_dork_var.set(True)
+                    working_q = re.sub(r'\([^\)]*(?:"phone"|"tel"|"mobile"|"contact")[^\)]*\)', ' ', working_q, flags=re.IGNORECASE)
+                    
+                # 8. Groups for Industry, Scale, Geo
+                bracketed_groups = re.findall(r'\(([^)]+)\)', working_q)
+                for b in bracketed_groups:
+                    working_q = working_q.replace(f"({b})", " ")
+                    
+                remaining_quotes = re.findall(r'"([^"]+)"', working_q)
+                for q in remaining_quotes:
+                    working_q = working_q.replace(f'"{q}"', " ")
+                    
+                rem_words = [w.strip() for w in working_q.split() if w.strip()]
+                
+                groups = [f"({b})" if " OR " in b else b for b in bracketed_groups]
+                for q in remaining_quotes:
+                    groups.append(f'"{q}"')
+                if rem_words:
+                    groups.append(" ".join(rem_words))
+                    
+                unassigned = []
+                for g in groups:
+                    g_lower = g.lower()
+                    if any(geo in g_lower for geo in ["united kingdom", "uk", "england", "scotland", "wales", "ireland", "london", "europe", "united states", "usa"]):
+                        if not self.gen_geo_var.get():
+                            self.gen_geo_var.set(g)
+                            continue
+                    if any(si in g_lower for si in ["multiple sites", "depots across", "regional hubs", "corporate hq", "group operations", "national coverage"]):
+                        if not self.gen_scale_var.get():
+                            self.gen_scale_var.set(g)
+                            continue
+                    unassigned.append(g)
+                    
+                for g in unassigned:
+                    if not self.gen_industry_var.get():
+                        self.gen_industry_var.set(g)
+                    elif not self.gen_scale_var.get():
+                        self.gen_scale_var.set(g)
+                    elif not self.gen_geo_var.get():
+                        self.gen_geo_var.set(g)
+                    else:
+                        self.gen_industry_var.set(self.gen_industry_var.get() + f" {g}")
+
+        finally:
+            self._updating_query = False
+
+    def _flash_query_preview_recalled(self, subtab_name="Tab 1: Targeted Search"):
+        """Provides prominent visual feedback highlighting that a past query was recalled."""
+        try:
+            self.query_preview_entry.configure(style="RecalledSuccess.TEntry")
+        except Exception:
+            pass
+            
+        if hasattr(self, "recalled_notice_lbl"):
+            self.recalled_notice_lbl.configure(
+                text=f"✨ Recalled past query into {subtab_name} and populated form fields!",
+                foreground="#059669"
+            )
+            
+        def _restore_style():
+            try:
+                self.query_preview_entry.configure(style="TEntry")
+            except Exception:
+                pass
+            if hasattr(self, "recalled_notice_lbl"):
+                self.recalled_notice_lbl.configure(text="")
+                
+        self.after(2500, _restore_style)
 
     def _on_history_combo_selected(self, event=None):
         val = self.history_combo.get()
         if not val:
             return
-        engine, query = self._extract_query_from_log_entry(val)
-        self._load_recalled_query(engine, query)
+        engine, search_type, query = self._extract_query_from_log_entry(val)
+        self._load_recalled_query(engine, val)
 
     def _recall_selected_from_listbox(self):
         sel = self.history_listbox.curselection()
@@ -3240,9 +3531,8 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             messagebox.showinfo("History", "Please select a query line from the history list.")
             return
         val = self.history_listbox.get(sel[0])
-        engine, query = self._extract_query_from_log_entry(val)
-        self._load_recalled_query(engine, query)
-        self.notebook.select(self.tab_builder)
+        engine, search_type, query = self._extract_query_from_log_entry(val)
+        self._load_recalled_query(engine, val)
 
     def _copy_selected_history(self):
         sel = self.history_listbox.curselection()
@@ -3250,26 +3540,52 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             messagebox.showinfo("History", "Please select a query line from the list.")
             return
         val = self.history_listbox.get(sel[0])
-        _, query = self._extract_query_from_log_entry(val)
+        _, _, query = self._extract_query_from_log_entry(val)
         self.clipboard_clear()
         self.clipboard_append(query)
         messagebox.showinfo("Copied", f"Copied search query to clipboard:\n\n{query}")
 
-    def _load_recalled_query(self, engine, query):
-        """Loads a past query into the Query Builder and sets the engine."""
+    def _load_recalled_query(self, engine, log_entry_or_query):
+        """Loads a past query into the Query Builder, switches to the correct subtab, and populates form fields."""
+        if not log_entry_or_query:
+            return
+            
+        engine_detected, search_type, query = self._extract_query_from_log_entry(log_entry_or_query)
+        target_engine = engine or engine_detected
+        
+        # Switch to Query Builder main tab
+        self.notebook.select(self.tab_builder)
+        
+        # Deconstruct query and populate subtab form fields
+        self._deconstruct_and_populate_query(query, search_type)
+        
+        # Set the exact assembled query
+        self._updating_query = True
         self.assembled_query_var.set(query)
-        if engine in ["Google", "Bing", "DuckDuckGo", "Brave", "Yahoo", "Ahmia", "Yandex"]:
-            self.engine_var.set(engine)
-            for idx, item in enumerate(self.engine_combo['values']):
-                if engine in item:
-                    self.engine_combo.current(idx)
-                    break
-        self.status_var.set(f"Recalled past query ({engine}): {query[:50]}...")
-        messagebox.showinfo("Query Recalled", f"Recalled search into Query Builder:\n\nEngine: {engine}\nQuery:\n{query}")
+        self._updating_query = False
+        
+        # Set engine combobox
+        if target_engine in ["Google", "Bing", "DuckDuckGo", "Brave", "Yahoo", "Ahmia", "Yandex"]:
+            self.engine_var.set(target_engine)
+            if hasattr(self, "engine_combo"):
+                for idx, item in enumerate(self.engine_combo['values']):
+                    if target_engine in item:
+                        self.engine_combo.current(idx)
+                        break
+                        
+        tab_label = "Tab 1 (Targeted Site & Profiles)" if search_type == "targeted" else "Tab 2 (Generalized Industry & Facilities)"
+        self.status_var.set(f"📥 Recalled {target_engine} query into {tab_label}: {query[:50]}...")
+        
+        # Flash visual feedback
+        self._flash_query_preview_recalled(tab_label)
 
     def _clear_history_log(self):
-        if messagebox.askyesno("Clear History", "Are you sure you want to clear all logged search queries?"):
+        if messagebox.askyesno("Clear History", "Are you sure you want to clear all logged search queries from SQLite and history?"):
             self.search_history.clear()
+            try:
+                storage.clear_search_history()
+            except Exception:
+                pass
             try:
                 with open(HISTORY_LOG_FILE, "w", encoding="utf-8") as f:
                     f.write("")

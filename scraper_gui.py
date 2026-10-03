@@ -84,6 +84,47 @@ POST_NOMINALS = {
     "fimi", "mimi", "dip", "pgdip", "pge", "hnd", "hnc"
 }
 
+NON_PERSON_TOKENS = {
+    "site", "contact", "contacts", "commercial", "enquiry", "enquiries",
+    "customer", "service", "services", "head", "office", "headquarters",
+    "sales", "team", "support", "helpdesk", "general", "operations",
+    "facility", "facilities", "depot", "plant", "station", "centre", "center",
+    "press", "media", "info", "admin", "administration", "recycling", "waste",
+    "environmental", "management", "the", "heart", "of", "our", "lead", "leads",
+    "about", "location", "locations", "depots", "manager", "director", "officer",
+    "deputy", "assistant", "executive", "in", "london", "uk", "waste", "materials"
+}
+
+JOB_BOARD_DOMAINS = {
+    "fish4.co.uk", "indeed.com", "indeed.co.uk", "reed.co.uk", "totaljobs.com",
+    "cv-library.co.uk", "glassdoor.com", "glassdoor.co.uk", "jooble.org",
+    "jobsite.co.uk", "ziprecruiter.com", "ziprecruiter.co.uk", "monster.co.uk",
+    "monster.com", "simplyhired.com", "simplyhired.co.uk", "targetjobs.co.uk",
+    "cwjobs.co.uk", "adzuna.co.uk", "guardianjobs.com", "jobs.theguardian.com",
+    "jobserve.com", "jobstoday.co.uk", "bamboohr.com", "greenhouse.io",
+    "lever.co", "workday.com", "workable.com", "jobrapido.com", "careers-page.com"
+}
+
+JOB_URL_PATTERNS = [
+    r'/jobs?/', r'/vacanc(?:y|ies)/', r'/job-opportunity/', r'/employment-opportunity/'
+]
+
+def is_job_posting_url(url: str) -> bool:
+    """Detects whether a URL originates from a job recruitment aggregator board."""
+    if not url:
+        return False
+    try:
+        parsed = urllib.parse.urlparse(url)
+        netloc = re.sub(r'^www\.', '', parsed.netloc.lower())
+        if netloc in JOB_BOARD_DOMAINS or any(netloc.endswith("." + jb) for jb in JOB_BOARD_DOMAINS):
+            return True
+        if any(re.search(p, parsed.path, re.IGNORECASE) for p in JOB_URL_PATTERNS):
+            if not any(k in parsed.path.lower() for k in ["/about", "/contact", "/facility", "/facilities", "/services", "/depot"]):
+                return True
+    except Exception:
+        pass
+    return False
+
 _MX_CACHE = {}
 
 
@@ -101,8 +142,9 @@ def clean_org_text(text: str) -> str:
 
 def parse_lead_name(full_name: str):
     """
-    Parses a raw full name string from LinkedIn into (First Name, Surname, Display Name).
+    Parses a raw full name string into (First Name, Surname, Display Name).
     Strips titles, honorifics, post-nominal credentials, pronoun tags, and noise.
+    Recognizes non-person entities and generic titles (e.g. 'Site Contact', 'Commercial Enquiries').
     """
     if not full_name:
         return "", "", ""
@@ -111,7 +153,7 @@ def parse_lead_name(full_name: str):
     raw = re.sub(r'[\U00010000-\U0010ffff]', '', full_name)
     raw = raw.replace(" | LinkedIn", "").replace(" - LinkedIn", "").strip()
     
-    # Remove parenthesized pronouns or details (e.g. "John Smith (He/Him)")
+    # Remove parenthesized pronouns or details (e.g. "John Smith (He/Him)" or "Site Contact (Lea Riverside)")
     raw = re.sub(r'\([^\)]*\)', '', raw)
     raw = re.sub(r'\[[^\]]*\]', '', raw)
     
@@ -134,11 +176,20 @@ def parse_lead_name(full_name: str):
         return "", "", main_name
         
     if len(clean_words) == 1:
+        if clean_words[0].lower() in NON_PERSON_TOKENS:
+            return "", "", main_name
         return clean_words[0].capitalize(), "", clean_words[0].capitalize()
         
     first_name = clean_words[0].capitalize()
     last_name = clean_words[-1].capitalize()
     
+    # Check if this is a generic non-person entity (e.g. "Site Contact", "Commercial Enquiries", "The Heart of Our Operations", "Lea Riverside Facilities")
+    if (first_name.lower() in NON_PERSON_TOKENS and last_name.lower() in NON_PERSON_TOKENS) or \
+       last_name.lower() in ["facilities", "facility", "depot", "plant", "station", "centre", "center", "operations", "recycling", "services", "team", "office", "group", "ltd", "limited", "plc", "enquiries", "contact", "contacts", "management", "works", "manager", "officer", "director"] or \
+       all(cw.lower() in NON_PERSON_TOKENS for cw in clean_words) or \
+       main_name.lower().strip().startswith(("site contact", "commercial enquir", "general enquir", "customer service", "head office", "sales team", "the heart of", "deputy operations", "operations manager")):
+        return "", "", main_name
+        
     # Handle compound surnames (e.g. "van der Sar", "de Boer", "St. John")
     if len(clean_words) == 3 and clean_words[1].lower() in ["van", "de", "von", "del", "st", "st."]:
         last_name = f"{clean_words[1].capitalize()} {clean_words[2].capitalize()}"
@@ -418,7 +469,22 @@ def api_enrich_lead(lead_dict: dict, provider: str = "builtin", api_key: str = "
         domain = resolve_organization_domain(org, headline, snippet, industry, custom_domain)
         
     raw_email = lead_dict.get("Email", "")
-    
+    if not raw_email and lead_dict.get("Enriched Email"):
+        existing_e = lead_dict.get("Enriched Email", "")
+        if "info@" not in existing_e and "Pending" not in lead_dict.get("Deliverability", ""):
+            raw_email = existing_e
+            
+    # Auto scrape site contacts if open-web URL and no real email yet
+    if not raw_email and url and "linkedin.com" not in url and (url.startswith("http://") or url.startswith("https://")):
+        try:
+            site_res = scrape_website_contacts(url, timeout=8)
+            if site_res.get("emails"):
+                raw_email = ", ".join(site_res["emails"])
+                if not lead_dict.get("Phone") and site_res.get("phones"):
+                    lead_dict["Phone"] = ", ".join(site_res["phones"])
+        except Exception:
+            pass
+            
     # 1. External API: Hunter.io
     if provider == "hunter" and api_key and domain and (first_name or last_name):
         try:
@@ -435,6 +501,8 @@ def api_enrich_lead(lead_dict: dict, provider: str = "builtin", api_key: str = "
                     "Last Name": last_name,
                     "Domain": domain,
                     "Enriched Email": email,
+                    "Email": raw_email or email,
+                    "Phone": lead_dict.get("Phone", ""),
                     "Deliverability": status,
                     "Deliverability Badge": badge,
                     "MX Server": "Hunter.io Verified",
@@ -458,6 +526,8 @@ def api_enrich_lead(lead_dict: dict, provider: str = "builtin", api_key: str = "
                         "Last Name": last_name,
                         "Domain": domain,
                         "Enriched Email": email,
+                        "Email": raw_email or email,
+                        "Phone": lead_dict.get("Phone", ""),
                         "Deliverability": "Valid (Apollo)",
                         "Deliverability Badge": "🟢 Valid (Apollo)",
                         "MX Server": "Apollo.io Verified",
@@ -470,21 +540,27 @@ def api_enrich_lead(lead_dict: dict, provider: str = "builtin", api_key: str = "
     if domain:
         is_mx_valid, mx_status, mx_servers = verify_domain_mx(domain)
         if raw_email:
-            email = raw_email
-            deliverability = "Valid (Scraped)"
+            primary_e = raw_email.split(',')[0].strip()
+            email = primary_e
+            deliverability = "Valid (Scraped from Site)" if is_mx_valid else "Valid (Scraped)"
             badge = "🟢 Scraped"
         else:
             if first_name and last_name:
                 email = synthesize_email(first_name, last_name, domain, pattern)
+                if is_mx_valid:
+                    badge = "🟢 Valid (MX)"
+                    deliverability = "Valid (MX Verified)"
+                else:
+                    badge = "🔴 No MX"
+                    deliverability = "Invalid (No MX)"
             else:
                 email = f"info@{domain.lower()}"
-                
-            if is_mx_valid:
-                badge = "🟢 Valid (MX)"
-                deliverability = "Valid (MX Verified)"
-            else:
-                badge = "🔴 No MX"
-                deliverability = "Invalid (No MX)"
+                if is_mx_valid:
+                    badge = "🟢 Valid (MX)"
+                    deliverability = "Valid (MX Verified)"
+                else:
+                    badge = "🔴 No MX"
+                    deliverability = "Invalid (No MX)"
             
         mx_host = mx_servers[0] if mx_servers else "None"
         return {
@@ -492,6 +568,8 @@ def api_enrich_lead(lead_dict: dict, provider: str = "builtin", api_key: str = "
             "Last Name": last_name,
             "Domain": domain,
             "Enriched Email": email,
+            "Email": raw_email or email,
+            "Phone": lead_dict.get("Phone", ""),
             "Deliverability": deliverability,
             "Deliverability Badge": badge,
             "MX Server": mx_host,
@@ -503,6 +581,8 @@ def api_enrich_lead(lead_dict: dict, provider: str = "builtin", api_key: str = "
             "Last Name": last_name,
             "Domain": "",
             "Enriched Email": raw_email,
+            "Email": raw_email,
+            "Phone": lead_dict.get("Phone", ""),
             "Deliverability": "Not Found (Unknown Domain)" if not raw_email else "Valid (Scraped)",
             "Deliverability Badge": "⚪ Not Found" if not raw_email else "🟢 Scraped",
             "MX Server": "None",
@@ -1089,17 +1169,17 @@ class ToolTip:
             x = self.widget.winfo_rootx() + 10
             y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
             
-            # Screen horizontal boundary clamping
-            if x + req_w > screen_w - 12:
-                x = max(10, screen_w - req_w - 12)
-            if x < 10:
-                x = 10
-                
-            # Screen vertical boundary clamping & inversion (flip above widget if near bottom)
-            if y + req_h > screen_h - 40:
-                y = max(10, self.widget.winfo_rooty() - req_h - 6)
-            if y < 10:
-                y = 10
+            # Position safely relative to parent window bounds (works seamlessly across multi-monitors)
+            try:
+                top = self.widget.winfo_toplevel()
+                top_r = top.winfo_rootx() + top.winfo_width()
+                if x + req_w > top_r - 10:
+                    x = max(top.winfo_rootx() + 10, top_r - req_w - 10)
+                top_b = top.winfo_rooty() + top.winfo_height()
+                if y + req_h > top_b - 10:
+                    y = max(top.winfo_rooty() + 10, self.widget.winfo_rooty() - req_h - 6)
+            except Exception:
+                pass
                 
             tw.wm_geometry(f"{req_w}x{req_h}+{int(x)}+{int(y)}")
             tw.lift()
@@ -1176,10 +1256,7 @@ class TreeviewHoverToolTip:
             border = tk.Frame(tw, background="#334155", borderwidth=1, relief=tk.SOLID)
             border.pack(fill=tk.BOTH, expand=True)
             
-            screen_w = tw.winfo_screenwidth()
-            screen_h = tw.winfo_screenheight()
-            
-            wrap_w = min(580, max(360, screen_w - 80))
+            wrap_w = 540
             lbl = tk.Label(
                 border,
                 text=str(tip_text).strip(),
@@ -1200,15 +1277,17 @@ class TreeviewHoverToolTip:
             x = mouse_x + 14
             y = mouse_y + 16
             
-            if x + req_w > screen_w - 12:
-                x = max(10, screen_w - req_w - 12)
-            if x < 10:
-                x = 10
-                
-            if y + req_h > screen_h - 40:
-                y = max(10, mouse_y - req_h - 10)
-            if y < 10:
-                y = 10
+            # Position safely relative to parent window bounds
+            try:
+                top = self.tree.winfo_toplevel()
+                top_r = top.winfo_rootx() + top.winfo_width()
+                if x + req_w > top_r - 10:
+                    x = max(top.winfo_rootx() + 10, top_r - req_w - 10)
+                top_b = top.winfo_rooty() + top.winfo_height()
+                if y + req_h > top_b - 10:
+                    y = max(top.winfo_rooty() + 10, mouse_y - req_h - 10)
+            except Exception:
+                pass
                 
             tw.wm_geometry(f"{req_w}x{req_h}+{int(x)}+{int(y)}")
             tw.lift()
@@ -1334,6 +1413,50 @@ class GoogleLeadScraperSuite(tk.Tk):
         if "clam" in self.style.theme_names():
             self.style.theme_use("clam")
             
+        # Ensure Tcl combobox popdown placement engine dynamically resizes to fit full text strings
+        try:
+            self.tk.eval("""
+proc ::ttk::combobox::PlacePopdown {cb popdown} {
+    set x [winfo rootx $cb]
+    set y [winfo rooty $cb]
+    set w [winfo width $cb]
+    set h [winfo height $cb]
+    set style [$cb cget -style]
+    set postoffset [ttk::style lookup $style -postoffset {} {0 0 0 0}]
+    foreach var {x y w h} delta $postoffset {
+    	incr $var $delta
+    }
+
+    # Automatically widen listbox to fit longest value
+    set values [$cb cget -values]
+    set maxLen 0
+    foreach v $values {
+        set vLen [string length $v]
+        if {$vLen > $maxLen} {
+            set maxLen $vLen
+        }
+    }
+    set cbWidth [$cb cget -width]
+    if {$maxLen > $cbWidth} {
+        $popdown.f.l configure -width [expr {$maxLen + 4}]
+    }
+
+    update idletasks
+    set H [winfo reqheight $popdown]
+    set reqW [winfo reqwidth $popdown]
+    if {$reqW > $w} {
+        set w $reqW
+    }
+
+    # Position directly below the combobox at its exact root coordinates on the current screen/monitor
+    set Y [expr {$y + $h}]
+
+    wm geometry $popdown ${w}x${H}+${x}+${Y}
+}
+""")
+        except Exception:
+            pass
+
         # Base colors & Widget Font Options
         self.style.configure("TFrame", background="#F1F5F9")
         self.style.configure("TLabelframe", background="#F1F5F9")
@@ -1350,6 +1473,7 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.option_add("*TCombobox*Listbox.selectForeground", "#FFFFFF")
         self.option_add("*ComboboxPopdown*Listbox.selectBackground", "#3B82F6")
         self.option_add("*ComboboxPopdown*Listbox.selectForeground", "#FFFFFF")
+
 
         
         # Main Notebook (Tabs)
@@ -1617,7 +1741,7 @@ class GoogleLeadScraperSuite(tk.Tk):
             ("🏗️ Scrap Metal & Reprocessing Yards", "gen_scrap")
         ]
         
-        self.preset_combo = ttk.Combobox(r_pre, values=[p[0] for p in presets], state="readonly", width=38)
+        self.preset_combo = ttk.Combobox(r_pre, values=[p[0] for p in presets], state="readonly", width=48)
         self.preset_combo.current(0)
         self.preset_combo.pack(side=tk.LEFT, padx=(0, 8))
         self.preset_combo.bind("<<ComboboxSelected>>", self._on_preset_selected)
@@ -1630,7 +1754,7 @@ class GoogleLeadScraperSuite(tk.Tk):
         hist_lbl = ttk.Label(r_pre, text="📜 Recall Past Query:", style="Section.TLabel")
         hist_lbl.pack(side=tk.LEFT, padx=(5, 4))
         
-        self.history_combo = ttk.Combobox(r_pre, state="readonly", width=28)
+        self.history_combo = ttk.Combobox(r_pre, state="readonly", width=36)
         self._refresh_history_combo()
         self.history_combo.pack(side=tk.LEFT, padx=(0, 5))
         self.history_combo.bind("<<ComboboxSelected>>", self._on_history_combo_selected)
@@ -1685,7 +1809,7 @@ class GoogleLeadScraperSuite(tk.Tk):
         
         # Row 1: Parameters & Browser Window Mode
         r_params = ttk.Frame(exec_frame)
-        r_params.pack(fill=tk.X, pady=(0, 6))
+        r_params.pack(fill=tk.X, pady=(0, 4))
         
         hl_pages = self._create_help_label(r_params, "Pages to Scrape:", "Number of result pages to fetch (each page has ~10-15 results).", width=14)
         hl_pages.pack(side=tk.LEFT)
@@ -1721,7 +1845,21 @@ class GoogleLeadScraperSuite(tk.Tk):
         r_normal.pack(side=tk.LEFT)
         ToolTip(r_normal, "Opens standard size browser window (useful for manually solving CAPTCHAs if needed).")
         
-        # Row 2: Action Buttons
+        # Row 2: Deep Extraction & Job Board Filter Options
+        r_opts = ttk.Frame(exec_frame)
+        r_opts.pack(fill=tk.X, pady=(2, 6))
+        
+        self.auto_scrape_site_var = tk.BooleanVar(value=True)
+        chk_autocrawl = ttk.Checkbutton(r_opts, text="🌐 Auto-Crawl Website Contacts (Fetch real emails & phones from /contact pages)", variable=self.auto_scrape_site_var)
+        chk_autocrawl.pack(side=tk.LEFT, padx=(0, 15))
+        ToolTip(chk_autocrawl, "Automatically crawls /contact, /about, and /facilities pages on each discovered domain to extract verified real emails (e.g. enquiries@domain.co.uk) and telephone numbers.")
+        
+        self.exclude_job_boards_var = tk.BooleanVar(value=True)
+        chk_no_jobs = ttk.Checkbutton(r_opts, text="🚫 Exclude Job Boards (Fish4, Indeed, Reed, Totaljobs, Vacancies)", variable=self.exclude_job_boards_var, command=self._rebuild_query)
+        chk_no_jobs.pack(side=tk.LEFT)
+        ToolTip(chk_no_jobs, "Excludes recruitment aggregator job boards (Fish4, Indeed, Reed, Totaljobs, etc.) so you only get actual commercial facilities and businesses.")
+
+        # Row 3: Action Buttons
         r_actions = ttk.Frame(exec_frame)
         r_actions.pack(fill=tk.X, pady=(2, 0))
         
@@ -1733,7 +1871,7 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.stop_btn.pack(side=tk.LEFT, padx=(0, 15))
         ToolTip(self.stop_btn, "Stops the active search immediately.")
         
-        hint_exec = ttk.Label(r_actions, text="💡 Mini Corner Window keeps Google docked as a tiny widget in the bottom corner so your screen stays clear.", foreground="#64748B", font=("Segoe UI", 8, "italic"))
+        hint_exec = ttk.Label(r_actions, text="💡 Live progress bar and search activity spinner will appear in the Results tab during extraction.", foreground="#64748B", font=("Segoe UI", 8, "italic"))
         hint_exec.pack(side=tk.LEFT)
 
     def _build_subtab_targeted(self):
@@ -1946,7 +2084,7 @@ class GoogleLeadScraperSuite(tk.Tk):
             "🛢️ Chemical & Hazardous Storage (COMAH)",
             "🏗️ Metal Recycling & Scrap Yards",
             "(Clear Category)"
-        ], state="readonly", width=32)
+        ], state="readonly", width=38)
         self.gen_category_combo.current(0)
         self.gen_category_combo.pack(side=tk.LEFT, padx=(0, 6))
         self.gen_category_combo.bind("<<ComboboxSelected>>", self._on_gen_category_selected)
@@ -1975,7 +2113,7 @@ class GoogleLeadScraperSuite(tk.Tk):
             "🏛️ Corporate HQ & Group Operations",
             "🌐 UK-Wide & National Coverage",
             "(None / Open Scale)"
-        ], state="readonly", width=32)
+        ], state="readonly", width=38)
         self.gen_scale_combo.current(0)
         self.gen_scale_combo.pack(side=tk.LEFT, padx=(0, 6))
         self.gen_scale_combo.bind("<<ComboboxSelected>>", self._on_gen_scale_selected)
@@ -2005,7 +2143,7 @@ class GoogleLeadScraperSuite(tk.Tk):
             "🇺🇸 United States Nationwide",
             "🇪🇺 Europe & Major Nations",
             "(Worldwide / Open Region)"
-        ], state="readonly", width=32)
+        ], state="readonly", width=38)
         self.gen_geo_combo.current(0)
         self.gen_geo_combo.pack(side=tk.LEFT, padx=(0, 6))
         self.gen_geo_combo.bind("<<ComboboxSelected>>", self._on_gen_geo_selected)
@@ -2035,7 +2173,7 @@ class GoogleLeadScraperSuite(tk.Tk):
             "🛡️ Exclude Public Sector / Government",
             "🛡️ Exclude Directory & Aggregator Sites",
             "(No Exclusions)"
-        ], state="readonly", width=32)
+        ], state="readonly", width=38)
         self.gen_exclude_combo.current(0)
         self.gen_exclude_combo.pack(side=tk.LEFT, padx=(0, 6))
         self.gen_exclude_combo.bind("<<ComboboxSelected>>", self._on_gen_exclude_selected)
@@ -2279,6 +2417,18 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.save_enriched_btn.pack(side=tk.RIGHT)
         ToolTip(self.save_enriched_btn, "Exports clean, enriched spreadsheet with First Name, Surname, Job Role, Organisation, Email, Domain, and MX Status.")
         
+        # 3b. Active Search Progress Banner (Animated Visual Aid)
+        self.search_progress_frame = ttk.Frame(self.tab_results, padding="4")
+        
+        self.search_progress_lbl = ttk.Label(self.search_progress_frame, text="🔄 Searching background engine & crawling website contacts...", font=("Segoe UI", 9, "bold"), foreground="#2563EB")
+        self.search_progress_lbl.pack(side=tk.LEFT, padx=(0, 10))
+        
+        self.search_progress_bar = ttk.Progressbar(self.search_progress_frame, mode="indeterminate", length=260)
+        self.search_progress_bar.pack(side=tk.LEFT, padx=(0, 10))
+        
+        self.search_progress_detail_lbl = ttk.Label(self.search_progress_frame, text="Initializing...", foreground="#64748B", font=("Segoe UI", 8, "italic"))
+        self.search_progress_detail_lbl.pack(side=tk.LEFT)
+
         # 4. Main View Container (Holds both Interactive Treeview Table and Text Box)
         self.view_container = ttk.Frame(self.tab_results)
         self.view_container.pack(fill=tk.BOTH, expand=True, pady=(0, 6))
@@ -5407,11 +5557,11 @@ class GoogleLeadScraperSuite(tk.Tk):
     def _on_gen_exclude_selected(self, event=None):
         val = self.gen_exclude_combo.get()
         if "Municipal/Council Tips & .gov.uk" in val:
-            self.gen_exclude_var.set("-council -civic -household -tip -hwrc -.gov.uk")
+            self.gen_exclude_var.set("-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -fish4")
         elif "Council Tips + Job" in val:
-            self.gen_exclude_var.set("-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers")
+            self.gen_exclude_var.set("-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -totaljobs -reed -fish4")
         elif "Job & Recruitment" in val:
-            self.gen_exclude_var.set("-jobs -recruiting -indeed -careers -vacancies -totaljobs -reed")
+            self.gen_exclude_var.set("-jobs -recruiting -indeed -careers -vacancies -totaljobs -reed -fish4 -cv-library")
         elif "Public Sector" in val:
             self.gen_exclude_var.set("-gov -council -nhs -police -.gov.uk -.nhs.uk")
         elif "Directory" in val:
@@ -5428,7 +5578,7 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.gen_industry_var.set('("Materials Recovery Facility" OR "waste transfer station" OR "commercial recycling facility")')
         self.gen_scale_var.set('("multiple sites" OR "depots across" OR "nationwide" OR "head office")')
         self.gen_geo_var.set('("United Kingdom" OR "UK" OR "England" OR "Scotland" OR "Wales")')
-        self.gen_exclude_var.set('-council -civic -household -tip -hwrc -.gov.uk')
+        self.gen_exclude_var.set('-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -fish4')
         self.gen_intext_var.set("")
         self.gen_inurl_var.set("")
         self.gen_site_var.set("")
@@ -5606,8 +5756,16 @@ class GoogleLeadScraperSuite(tk.Tk):
             if ex:
                 parts.append(ex)
                 
+        # Automatic Job Board exclusions if toggle is active and not already excluded
+        if getattr(self, "exclude_job_boards_var", None) and self.exclude_job_boards_var.get():
+            combined_q = " ".join(parts).lower()
+            if "-job" not in combined_q and "linkedin.com/in/" not in combined_q:
+                parts.append("-jobs -recruitment -vacancies -careers")
+                
         final_query = " ".join(parts)
         self._updating_query = True
+        self.assembled_query_var.set(final_query)
+        self._updating_query = False
         self.assembled_query_var.set(final_query)
         self._updating_query = False
 
@@ -5992,6 +6150,11 @@ class GoogleLeadScraperSuite(tk.Tk):
             href = item["href"]
             snippet = item["snippet"]
             
+            # Check if this lead originates from a job recruitment aggregator board (e.g. Fish4, Indeed, Reed, Totaljobs)
+            if getattr(self, "exclude_job_boards_var", None) and self.exclude_job_boards_var.get():
+                if is_job_posting_url(href):
+                    continue
+            
             combined_text = f"{raw_title} {snippet}"
             emails = EMAIL_PATTERN.findall(combined_text)
             phones = PHONE_PATTERN.findall(combined_text)
@@ -6033,6 +6196,17 @@ class GoogleLeadScraperSuite(tk.Tk):
                 resolved_dom = custom_dom.strip().lower().replace("@", "") if (custom_dom and custom_dom.strip()) else resolve_organization_domain(company, headline, snippet, industry)
             else:
                 # Open-Web Corporate / Facility / Commercial Lead (e.g. Materials Recovery Facility, Depot, Plant, MM Group)
+                # If auto-crawl is enabled, crawl the target website's contact pages directly
+                if href and getattr(self, "auto_scrape_site_var", None) and self.auto_scrape_site_var.get():
+                    try:
+                        site_res = scrape_website_contacts(href, timeout=6)
+                        if site_res.get("emails"):
+                            emails.extend(site_res["emails"])
+                        if site_res.get("phones"):
+                            phones.extend(site_res["phones"])
+                    except Exception:
+                        pass
+
                 delims = [r'\s+[|]\s+', r'\s+[-–—]\s+', r'\s+::\s+', r'\s+:\s+']
                 title_parts = [clean_title]
                 for d in delims:
@@ -6090,8 +6264,8 @@ class GoogleLeadScraperSuite(tk.Tk):
                 deliv_status = "Pending Verification"
                 deliv_badge = "⚪ Pending"
             else:
-                enriched_email = raw_email
-                deliv_status = "Valid (Scraped)" if raw_email else "Not Enriched"
+                enriched_email = raw_email.split(',')[0].strip() if raw_email else ""
+                deliv_status = "Valid (Scraped from Site)" if raw_email else "Not Enriched"
                 deliv_badge = "🟢 Scraped" if raw_email else "⚪ Not Found"
             
             normalized_leads.append({
@@ -6104,7 +6278,7 @@ class GoogleLeadScraperSuite(tk.Tk):
                 "Enriched Email": enriched_email,
                 "Deliverability": deliv_status,
                 "Deliverability Badge": deliv_badge,
-                "MX Server": "",
+                "MX Server": "Live Website Verified" if "Scraped" in deliv_status else "",
                 "Email": raw_email,
                 "Phone": ", ".join(list(dict.fromkeys(phones))) if phones else "",
                 "URL": href,
@@ -6112,6 +6286,36 @@ class GoogleLeadScraperSuite(tk.Tk):
             })
             
         return normalized_leads
+
+    def _show_search_progress(self, title_msg="Searching background engine...", detail_msg=""):
+        if hasattr(self, "search_progress_lbl"):
+            self.search_progress_lbl.configure(text=f"🔄 {title_msg}")
+        if hasattr(self, "search_progress_detail_lbl"):
+            self.search_progress_detail_lbl.configure(text=detail_msg)
+        if hasattr(self, "search_progress_frame") and hasattr(self, "view_container"):
+            try:
+                self.search_progress_frame.pack(fill=tk.X, pady=(0, 4), before=self.view_container)
+                self.search_progress_bar.start(12)
+            except Exception:
+                pass
+
+    def _update_search_progress(self, title_msg, detail_msg=""):
+        if hasattr(self, "search_progress_lbl"):
+            self.search_progress_lbl.configure(text=f"🔄 {title_msg}")
+        if hasattr(self, "search_progress_detail_lbl"):
+            self.search_progress_detail_lbl.configure(text=detail_msg)
+
+    def _hide_search_progress(self):
+        if hasattr(self, "search_progress_bar"):
+            try:
+                self.search_progress_bar.stop()
+            except Exception:
+                pass
+        if hasattr(self, "search_progress_frame"):
+            try:
+                self.search_progress_frame.pack_forget()
+            except Exception:
+                pass
 
     def _start_search(self):
         raw_query = self.assembled_query_var.get().strip()
@@ -6161,6 +6365,9 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.results_text.insert(tk.END, f"Target Engine: {engine}{tor_msg}{mode_desc}\nQuery: {query}\n\nInitializing browser...\n")
         self.status_var.set(f"Starting {engine} extraction...")
         
+        # Show animated visual progress banner
+        self._show_search_progress(f"Searching {engine} (Page 1 of {pages})...", "Initializing engine & live contact crawler...")
+        
         threading.Thread(target=self._scrape_worker, args=(engine, query, pages, delay, browser_mode, use_tor), daemon=True).start()
 
     def _interruptible_sleep(self, duration_sec):
@@ -6185,6 +6392,7 @@ class GoogleLeadScraperSuite(tk.Tk):
             self._append_log("\n⏹ Search stopped by user.\n")
             self.search_btn.configure(state=tk.NORMAL)
             self.stop_btn.configure(state=tk.DISABLED)
+            self._hide_search_progress()
             
             d = self.driver
             self.driver = None
@@ -6278,6 +6486,7 @@ class GoogleLeadScraperSuite(tk.Tk):
                 
             url = self._build_search_url(engine, encoded_query, page)
             self.status_var.set(f"Fetching {engine} search page {page + 1} of {pages}...")
+            self.after(0, self._update_search_progress, f"Searching {engine} (Page {page + 1} of {pages})...", f"Fetching SERP HTML and crawling site contacts...")
             
             try:
                 self.driver.get(url)
@@ -6421,6 +6630,7 @@ class GoogleLeadScraperSuite(tk.Tk):
             if self.stop_requested:
                 break
             url = self._build_search_url(engine, encoded_query, page)
+            self.after(0, self._update_search_progress, f"Requesting {engine} (Page {page + 1} of {pages})...", "Fetching HTML & extracting leads...")
             try:
                 resp = requests.get(url, headers=headers, proxies=proxies, timeout=15)
                 if resp.status_code != 200:
@@ -6449,6 +6659,7 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.is_running = False
         self.search_btn.configure(state=tk.NORMAL)
         self.stop_btn.configure(state=tk.DISABLED)
+        self._hide_search_progress()
         
         count = len(self.results_data)
         email_count = sum(1 for r in self.results_data if r.get("Email"))
@@ -6459,7 +6670,7 @@ class GoogleLeadScraperSuite(tk.Tk):
         if count == 0:
             messagebox.showinfo("Search Complete", f"No results were found on {self.engine_var.get()}.\n\nTip: Leave 'Show Chrome Window' checked to solve any CAPTCHA if prompted.")
         else:
-            messagebox.showinfo("Search Complete", f"Extraction completed on {self.engine_var.get()}!\n\nFound: {count} leads\nExtracted Emails: {email_count}\n\nResults are ready in the text box for copy/export.")
+            messagebox.showinfo("Search Complete", f"Extraction completed on {self.engine_var.get()}!\n\nFound: {count} leads\nExtracted Emails: {email_count}\n\nResults are ready in the table and text box for export.")
 
     def _get_filtered_data(self):
         """Returns results filtered by search text, organisation, status, and sorted by active column."""

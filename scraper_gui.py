@@ -1737,55 +1737,41 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         tools_menu.add_command(label="⚙️ Enrichment Settings", command=self._open_enrichment_settings)
         menubar.add_cascade(label="Tools", menu=tools_menu)
 
-        # 4. Help Menu (User Guide & Walkthroughs)
+        # 4. Dedicated User Guide Menu
+        guide_menu = tk.Menu(menubar, tearoff=0)
+        guide_menu.add_command(label="📖 Complete Beginner's User Guide (In-App Reader)...", command=self._open_user_guide_dialog)
+        guide_menu.add_command(label="🌐 Open USER_GUIDE.md in Default Viewer", command=self._open_user_guide_external)
+        guide_menu.add_separator()
+        guide_menu.add_command(label="⚡ Quick Start 4-Step Walkthrough", command=self._show_quick_start_dialog)
+        guide_menu.add_command(label="🛡️ Deliverability Badges & SMTP Guide", command=self._show_deliverability_guide)
+        guide_menu.add_command(label="📥 Direct Open Data & Public Registers Guide", command=self._show_opendata_guide)
+        menubar.add_cascade(label="📖 User Guide", menu=guide_menu)
+
+        # 5. Help Menu
         help_menu = tk.Menu(menubar, tearoff=0)
-        help_menu.add_command(label="📖 Complete Beginner's User Guide (In-App Reader)...", command=self._open_user_guide_dialog)
-        help_menu.add_command(label="🌐 Open USER_GUIDE.md in Default Viewer", command=self._open_user_guide_external)
         help_menu.add_command(label="📄 Open README.md in Default Viewer", command=self._open_readme_external)
         help_menu.add_separator()
-        help_menu.add_command(label="⚡ Quick Start 4-Step Walkthrough", command=self._show_quick_start_dialog)
-        help_menu.add_command(label="🛡️ Deliverability Badges & SMTP Guide", command=self._show_deliverability_guide)
-        help_menu.add_command(label="📥 Direct Open Data & Public Registers Guide", command=self._show_opendata_guide)
-        help_menu.add_separator()
-        help_menu.add_command(label="ℹ️ About Suite", command=self._show_about_dialog)
+        help_menu.add_command(label="ℹ️ About Multi-Engine Suite", command=self._show_about_dialog)
         menubar.add_cascade(label="Help", menu=help_menu)
 
         self.config(menu=menubar)
 
-        main_frame = ttk.Frame(self, padding="10")
+        main_frame = ttk.Frame(self, padding="4")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # --- Top Banner ---
+        # --- Top Banner (Slim Header) ---
         top_banner = ttk.Frame(main_frame)
-        top_banner.pack(fill=tk.X, pady=(0, 8))
+        top_banner.pack(fill=tk.X, pady=(0, 2))
         
-        banner_left = ttk.Frame(top_banner)
-        banner_left.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        title_lbl = ttk.Label(top_banner, text="⚡ Multi-Engine Lead & Advanced Dork Suite", style="Header.TLabel")
+        title_lbl.pack(side=tk.LEFT, anchor=tk.W)
         
-        title_lbl = ttk.Label(banner_left, text="⚡ Multi-Engine Lead & Advanced Dork Suite", style="Header.TLabel")
-        title_lbl.pack(anchor=tk.W)
-        sub_lbl = ttk.Label(banner_left, text="Search Google, Bing, DuckDuckGo, Brave, Yahoo, Tor/Onion with precision Dorks, extract contacts, and export with 1 click.", style="SubHeader.TLabel")
-        sub_lbl.pack(anchor=tk.W)
-        
-        # Top Banner Quick Action Buttons (Always visible across all tabs and screen sizes)
-        banner_right = ttk.Frame(top_banner)
-        banner_right.pack(side=tk.RIGHT)
-        
-        self.top_search_btn = ttk.Button(banner_right, text="🚀 Search Leads", style="Success.TButton", command=self._start_search)
-        self.top_search_btn.pack(side=tk.RIGHT, padx=(0, 6))
-        ToolTip(self.top_search_btn, "Executes the search query and begins lead extraction immediately.")
-        
-        self.top_stop_btn = ttk.Button(banner_right, text="⏹ Stop", style="Danger.TButton", command=self._stop_search, state=tk.DISABLED)
-        self.top_stop_btn.pack(side=tk.RIGHT, padx=(0, 6))
-        ToolTip(self.top_stop_btn, "Stops the active search operation.")
-        
-        btn_guide = ttk.Button(banner_right, text="📖 User Guide", style="Primary.TButton", command=self._open_user_guide_dialog)
-        btn_guide.pack(side=tk.RIGHT, padx=(0, 4))
-        ToolTip(btn_guide, "Open the complete interactive beginner's guide, dummy-proof walkthrough, and search strategies.")
+        sub_lbl = ttk.Label(top_banner, text="  —  Search Google, Bing, Brave, Yahoo, DDG with precision Dorks, extract contacts, and export with 1 click.", style="SubHeader.TLabel")
+        sub_lbl.pack(side=tk.LEFT, anchor=tk.W, padx=(4, 0))
 
         # --- Main Notebook (Tabs) ---
         self.notebook = ttk.Notebook(main_frame)
-        self.notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+        self.notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
         
         # Tab 1: Interactive Query Builder
         self.tab_builder = ttk.Frame(self.notebook, padding="2")
@@ -1891,12 +1877,12 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.builder_scroll_frame.bind("<Leave>", _unbind_builder_mousewheel)
 
         # 1. Search Engine & History Row
-        engine_preset_frame = ttk.LabelFrame(self.builder_scroll_frame, text=" 🌐 Search Engine & Template Selector ", padding="8")
-        engine_preset_frame.pack(fill=tk.X, pady=(0, 6))
+        engine_preset_frame = ttk.LabelFrame(self.builder_scroll_frame, text=" 🌐 Search Engine & Template Selector ", padding="4")
+        engine_preset_frame.pack(fill=tk.X, pady=(0, 2))
         
         # Row A: Search Engine & Tor Proxy
         r_eng = ttk.Frame(engine_preset_frame)
-        r_eng.pack(fill=tk.X, pady=(0, 4))
+        r_eng.pack(fill=tk.X, pady=(0, 2))
         
         hl_eng = self._create_help_label(r_eng, "Search Engine:", "Select which search engine to query. Each engine supports different operators and anti-bot defenses.")
         hl_eng.pack(side=tk.LEFT)
@@ -1928,7 +1914,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         
         # Row B: Preset Template + History Recall
         r_pre = ttk.Frame(engine_preset_frame)
-        r_pre.pack(fill=tk.X, pady=(4, 0))
+        r_pre.pack(fill=tk.X, pady=(2, 0))
         
         hl_pre = self._create_help_label(r_pre, "Load Template:", "Pre-configured industry search templates (Targeted Profile Searches & Generalized Facility Queries).")
         hl_pre.pack(side=tk.LEFT)
@@ -1999,36 +1985,33 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         ToolTip(self.history_combo, "Select any past logged search query to recall it directly into the builder.")
 
         # 2. Builder Form Panes - Tabbed Criteria Selector
-        self.criteria_frame = ttk.LabelFrame(self.builder_scroll_frame, text=" 🎯 Search Criteria & Strategy Selector ", padding="6")
-        self.criteria_frame.pack(fill=tk.X, pady=(0, 6))
+        self.criteria_frame = ttk.LabelFrame(self.builder_scroll_frame, text=" 🎯 Search Criteria & Strategy Selector ", padding="3")
+        self.criteria_frame.pack(fill=tk.X, pady=(0, 2))
         
         self.criteria_notebook = ttk.Notebook(self.criteria_frame, style="Sub.TNotebook")
-        self.criteria_notebook.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
+        self.criteria_notebook.pack(fill=tk.BOTH, expand=True, padx=2, pady=1)
         
         # Sub-Tab 1: Targeted Site & Profile Search
-        self.subtab_targeted = ttk.Frame(self.criteria_notebook, padding="6")
+        self.subtab_targeted = ttk.Frame(self.criteria_notebook, padding="4")
         self.criteria_notebook.add(self.subtab_targeted, text=" 🎯 Tab 1: Targeted Site & Profile Search (site:) ")
         self._build_subtab_targeted()
         
         # Sub-Tab 2: Generalized Industry & Facility Search
-        self.subtab_generalized = ttk.Frame(self.criteria_notebook, padding="6")
+        self.subtab_generalized = ttk.Frame(self.criteria_notebook, padding="4")
         self.criteria_notebook.add(self.subtab_generalized, text=" 🌐 Tab 2: Generalized Industry & Facility Search (Multi-Group Boolean) ")
         self._build_subtab_generalized()
         
         self.criteria_notebook.bind("<<NotebookTabChanged>>", self._on_criteria_tab_changed)
 
         # 3. Live Assembled Dork Preview Box
-        query_preview_frame = ttk.LabelFrame(self.builder_scroll_frame, text=" Live Assembled Search Query (Auto-Generated) ", padding="8")
-        query_preview_frame.pack(fill=tk.X, pady=(0, 6))
+        query_preview_frame = ttk.LabelFrame(self.builder_scroll_frame, text=" Live Assembled Search Query (Auto-Generated) ", padding="4")
+        query_preview_frame.pack(fill=tk.X, pady=(0, 2))
         
         self.assembled_query_var = tk.StringVar()
         self.query_preview_entry = ttk.Entry(query_preview_frame, textvariable=self.assembled_query_var, font=("Consolas", 10, "bold"), foreground="#1E293B")
-        self.query_preview_entry.pack(fill=tk.X, pady=(0, 4))
+        self.query_preview_entry.pack(fill=tk.X, pady=(0, 2))
         self.query_preview_entry.bind("<Return>", lambda event: self._start_search())
         ToolTip(self.query_preview_entry, "This query updates in real-time as you edit form fields above. You can also edit it directly here.")
-        
-        self.recalled_notice_lbl = ttk.Label(query_preview_frame, text="", style="RecalledNotice.TLabel")
-        self.recalled_notice_lbl.pack(anchor=tk.W, pady=(0, 4))
         
         preview_btn_bar = ttk.Frame(query_preview_frame)
         preview_btn_bar.pack(fill=tk.X)
@@ -2041,16 +2024,16 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         btn_reset_query.pack(side=tk.LEFT, padx=(0, 15))
         ToolTip(btn_reset_query, "Clears all textboxes and query fields back to a blank canvas.")
         
-        lbl_hint_live = ttk.Label(preview_btn_bar, text="✨ Updates live as you change fields in either tab. You can also edit it directly in the text box above.", foreground="#64748B")
+        lbl_hint_live = ttk.Label(preview_btn_bar, text="✨ Updates live as you change fields in either tab. You can also edit it directly in the text box above.", foreground="#059669", font=("Segoe UI", 9, "bold"))
         lbl_hint_live.pack(side=tk.LEFT)
         
         # 4. Search Execution Controls
-        exec_frame = ttk.LabelFrame(self.builder_scroll_frame, text=" Search Execution Controls ", padding="10")
-        exec_frame.pack(fill=tk.X, pady=(0, 4))
+        exec_frame = ttk.LabelFrame(self.builder_scroll_frame, text=" Search Execution Controls ", padding="4")
+        exec_frame.pack(fill=tk.X, pady=(0, 2))
         
         # Row 1: Parameters & Browser Window Mode
         r_params = ttk.Frame(exec_frame)
-        r_params.pack(fill=tk.X, pady=(0, 4))
+        r_params.pack(fill=tk.X, pady=(0, 2))
         
         hl_pages = self._create_help_label(r_params, "Pages to Scrape:", "Number of result pages to fetch (each page has ~10-15 results).", width=14)
         hl_pages.pack(side=tk.LEFT)
@@ -2086,21 +2069,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         r_normal.pack(side=tk.LEFT)
         ToolTip(r_normal, "Opens standard size browser window (useful for manually solving CAPTCHAs if needed).")
         
-        # Row 2: Deep Extraction & Job Board Filter Options
-        r_opts = ttk.Frame(exec_frame)
-        r_opts.pack(fill=tk.X, pady=(2, 6))
-        
-        self.auto_scrape_site_var = tk.BooleanVar(value=True)
-        chk_autocrawl = ttk.Checkbutton(r_opts, text="🌐 Auto-Crawl Website Contacts (Fetch real emails & phones from /contact pages)", variable=self.auto_scrape_site_var)
-        chk_autocrawl.pack(side=tk.LEFT, padx=(0, 15))
-        ToolTip(chk_autocrawl, "Automatically crawls /contact, /about, and /facilities pages on each discovered domain to extract verified real emails (e.g. enquiries@domain.co.uk) and telephone numbers.")
-        
-        self.exclude_job_boards_var = tk.BooleanVar(value=True)
-        chk_no_jobs = ttk.Checkbutton(r_opts, text="🚫 Exclude Job Boards (Fish4, Indeed, Reed, Totaljobs, Vacancies)", variable=self.exclude_job_boards_var, command=self._rebuild_query)
-        chk_no_jobs.pack(side=tk.LEFT)
-        ToolTip(chk_no_jobs, "Excludes recruitment aggregator job boards (Fish4, Indeed, Reed, Totaljobs, etc.) so you only get actual commercial facilities and businesses.")
-
-        # Row 3: Action Buttons
+        # Row 2: Action Buttons
         r_actions = ttk.Frame(exec_frame)
         r_actions.pack(fill=tk.X, pady=(2, 0))
         
@@ -3502,21 +3471,13 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         except Exception:
             pass
             
-        if hasattr(self, "recalled_notice_lbl"):
-            self.recalled_notice_lbl.configure(
-                text=f"✨ Recalled past query into {subtab_name} and populated form fields!",
-                foreground="#059669"
-            )
-            
         def _restore_style():
             try:
                 self.query_preview_entry.configure(style="TEntry")
             except Exception:
                 pass
-            if hasattr(self, "recalled_notice_lbl"):
-                self.recalled_notice_lbl.configure(text="")
                 
-        self.after(2500, _restore_style)
+        self.after(2000, _restore_style)
 
     def _on_history_combo_selected(self, event=None):
         val = self.history_combo.get()
@@ -4359,9 +4320,18 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
 
         dialog = tk.Toplevel(self)
         dialog.title("🔄 Email Pattern Reformatting & Retry Studio")
-        dialog.geometry("1060x730")
-        dialog.minsize(880, 600)
+        w, h = 1060, 700
         dialog.transient(self)
+        try:
+            self.update_idletasks()
+            x = self.winfo_rootx() + (self.winfo_width() // 2) - (w // 2)
+            y = self.winfo_rooty() + (self.winfo_height() // 2) - (h // 2)
+            dialog.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
+        except Exception:
+            dialog.geometry(f"{w}x{h}")
+        dialog.minsize(880, 550)
+        dialog.grab_set()
+        dialog.focus_set()
         dialog.configure(bg="#F1F5F9")
 
         # Dialog State
@@ -5603,16 +5573,18 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
 
         dialog = tk.Toplevel(self)
         dialog.title("📖 Complete User Guide & Knowledge Base - Multi-Engine Lead & Advanced Dork Suite")
-        dialog.geometry("1100x750")
-        dialog.minsize(850, 520)
-
-        # Center dialog relative to parent
+        w, h = 1100, 720
+        dialog.transient(self)
         try:
-            x = self.winfo_x() + (self.winfo_width() // 2) - 550
-            y = self.winfo_y() + (self.winfo_height() // 2) - 375
-            dialog.geometry(f"1100x750+{max(30, x)}+{max(30, y)}")
+            self.update_idletasks()
+            x = self.winfo_rootx() + (self.winfo_width() // 2) - (w // 2)
+            y = self.winfo_rooty() + (self.winfo_height() // 2) - (h // 2)
+            dialog.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
         except Exception:
-            pass
+            dialog.geometry(f"{w}x{h}")
+        dialog.minsize(850, 520)
+        dialog.grab_set()
+        dialog.focus_set()
 
         # Top Header & Search Bar Frame
         top_bar = ttk.Frame(dialog, padding=(12, 10, 12, 8))
@@ -5887,15 +5859,18 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         """Displays a clean modal with the 4-step dummy-proof quick start walkthrough."""
         dialog = tk.Toplevel(self)
         dialog.title("⚡ Quick Start: 4-Step Walkthrough")
-        dialog.geometry("750x520")
-        dialog.resizable(False, False)
-
+        w, h = 750, 500
+        dialog.transient(self)
         try:
-            x = self.winfo_x() + (self.winfo_width() // 2) - 375
-            y = self.winfo_y() + (self.winfo_height() // 2) - 260
-            dialog.geometry(f"750x520+{max(30, x)}+{max(30, y)}")
+            self.update_idletasks()
+            x = self.winfo_rootx() + (self.winfo_width() // 2) - (w // 2)
+            y = self.winfo_rooty() + (self.winfo_height() // 2) - (h // 2)
+            dialog.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
         except Exception:
-            pass
+            dialog.geometry(f"{w}x{h}")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        dialog.focus_set()
 
         frame = ttk.Frame(dialog, padding="16")
         frame.pack(fill=tk.BOTH, expand=True)
@@ -5929,15 +5904,18 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         """Displays a modal explaining email verification badges and SMTP handshake safety."""
         dialog = tk.Toplevel(self)
         dialog.title("🛡️ Email Deliverability Badges & Verification Guide")
-        dialog.geometry("780x560")
-        dialog.resizable(False, False)
-
+        w, h = 780, 540
+        dialog.transient(self)
         try:
-            x = self.winfo_x() + (self.winfo_width() // 2) - 390
-            y = self.winfo_y() + (self.winfo_height() // 2) - 280
-            dialog.geometry(f"780x560+{max(30, x)}+{max(30, y)}")
+            self.update_idletasks()
+            x = self.winfo_rootx() + (self.winfo_width() // 2) - (w // 2)
+            y = self.winfo_rooty() + (self.winfo_height() // 2) - (h // 2)
+            dialog.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
         except Exception:
-            pass
+            dialog.geometry(f"{w}x{h}")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        dialog.focus_set()
 
         frame = ttk.Frame(dialog, padding="16")
         frame.pack(fill=tk.BOTH, expand=True)
@@ -5972,15 +5950,18 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         """Displays a modal explaining how to use Tab 4 for direct open government registers."""
         dialog = tk.Toplevel(self)
         dialog.title("📥 Direct Open Data & Public Registers Guide")
-        dialog.geometry("780x520")
-        dialog.resizable(False, False)
-
+        w, h = 780, 500
+        dialog.transient(self)
         try:
-            x = self.winfo_x() + (self.winfo_width() // 2) - 390
-            y = self.winfo_y() + (self.winfo_height() // 2) - 260
-            dialog.geometry(f"780x520+{max(30, x)}+{max(30, y)}")
+            self.update_idletasks()
+            x = self.winfo_rootx() + (self.winfo_width() // 2) - (w // 2)
+            y = self.winfo_rooty() + (self.winfo_height() // 2) - (h // 2)
+            dialog.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
         except Exception:
-            pass
+            dialog.geometry(f"{w}x{h}")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        dialog.focus_set()
 
         frame = ttk.Frame(dialog, padding="16")
         frame.pack(fill=tk.BOTH, expand=True)
@@ -6007,15 +5988,18 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         """Displays the application About modal dialog."""
         dialog = tk.Toplevel(self)
         dialog.title("ℹ️ About Multi-Engine Lead & Advanced Dork Suite")
-        dialog.geometry("560x380")
-        dialog.resizable(False, False)
-
+        w, h = 560, 360
+        dialog.transient(self)
         try:
-            x = self.winfo_x() + (self.winfo_width() // 2) - 280
-            y = self.winfo_y() + (self.winfo_height() // 2) - 190
-            dialog.geometry(f"560x380+{max(30, x)}+{max(30, y)}")
+            self.update_idletasks()
+            x = self.winfo_rootx() + (self.winfo_width() // 2) - (w // 2)
+            y = self.winfo_rooty() + (self.winfo_height() // 2) - (h // 2)
+            dialog.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
         except Exception:
-            pass
+            dialog.geometry(f"{w}x{h}")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        dialog.focus_set()
 
         frame = ttk.Frame(dialog, padding="20")
         frame.pack(fill=tk.BOTH, expand=True)
@@ -8204,10 +8188,18 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         """Opens interactive configuration dialog for Domain Resolution, Patterns, and External APIs."""
         dlg = tk.Toplevel(self)
         dlg.title("⚙️ Email Enrichment & Domain Settings")
-        dlg.geometry("620x530")
-        dlg.resizable(False, False)
+        w, h = 640, 520
         dlg.transient(self)
+        try:
+            self.update_idletasks()
+            x = self.winfo_rootx() + (self.winfo_width() // 2) - (w // 2)
+            y = self.winfo_rooty() + (self.winfo_height() // 2) - (h // 2)
+            dlg.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
+        except Exception:
+            dlg.geometry(f"{w}x{h}")
+        dlg.resizable(False, False)
         dlg.grab_set()
+        dlg.focus_set()
         dlg.configure(bg="#F1F5F9")
         
         main_f = ttk.Frame(dlg, padding="15")

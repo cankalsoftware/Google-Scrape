@@ -1,80 +1,72 @@
-# ⚡ Multi-Engine Lead & Advanced Dork Extractor Suite
+# ⚡ Multi-Engine Lead Extractor & Advanced Google Dork Scraping Suite
 
-A modern Python & Tkinter desktop application for precision OSINT, advanced Google Dorking, multi-engine scraping, contact lead generation, automated email enrichment, and deliverability verification.
+A high-performance Python & Tkinter desktop suite for precision OSINT, advanced Google Dorking, multi-engine web scraping, automated contact extraction, corporate email enrichment, and zero-spam deliverability verification.
 
-> 📖 **Looking for a beginner walkthrough?** Read the [Beginner's User Guide & Walkthrough (USER_GUIDE.md)](file:///c:/Users/uyko7/Documents/VSCode/Google%20Scrape/USER_GUIDE.md) for step-by-step instructions.
+> 📖 **Comprehensive Walkthrough:** For complete step-by-step instructions, visual workflows, and feature deep-dives, consult the [Beginner's User Guide & Walkthrough (USER_GUIDE.md)](USER_GUIDE.md).
 
 ---
 
-## 🌟 Key Features
+## 🌟 Overview & Key Features
 
-- **⚡ Automated Email Enrichment & Deliverability Verification**:
-  - **Entity Parsing**: Automatically extracts clean First Name, Surname, Job Role, and Organisation from LinkedIn snippets.
-  - **UK Public Sector & Environmental Domain Normalizers**: Comprehensive built-in registries matching:
-    - **UK Fire & Rescue Services**: 50+ services (London Fire Brigade, GMFRS, WMFS, HIWFRS, Scottish Fire, etc.) to `.gov.uk`, `.org.uk`, and `.net`.
-    - **UK Environmental Regulators & Waste Registers**: Environment Agency (`environment.data.gov.uk`), Scottish Environment Protection Agency (`sepa.org.uk`), and Natural Resources Wales / Cyfoeth Naturiol Cymru (`naturalresources.wales`).
-    - **Public Sector & Healthcare**: NHS Trusts (`.nhs.uk`), Local Councils (`.gov.uk`), and Police Constabularies (`.police.uk`).
-  - **DNS MX Mailbox Verification**: Resolves live DNS MX records via `dnspython` to verify active Microsoft 365, Mimecast, and government secure mail gateways before displaying emails.
-  - **Deliverability Status Badges**: `🟢 Valid (MX Verified)`, `🟡 Risky`, `⚪ Not Found`, `🔴 Invalid (No MX)`.
-  - **Modular API Integrations**: Works 100% free with the built-in MX pattern synthesizer or integrates seamlessly with external APIs (Hunter.io, Apollo.io, Snov.io).
-  - **Embedded REST API Server**: Built-in background HTTP server exposing `POST /api/enrich` and `GET /api/health` on `http://127.0.0.1:8765`.
-- **🛡️ Email & CSV Deliverability Verifier (DNS MX & SMTP Handshake)**:
-  - **Option A (CSV File Import)**: Upload any external `.csv` (e.g., `Chief_Fire_Officers.csv`), auto-detect/select the email column, and verify hundreds of addresses in bulk.
-  - **Option B (Multi-Line Manual Paste)**: Multi-line text field supporting raw emails, comma-separated lists, and `Name, email@domain.com` formatted strings.
-  - **Full SMTP Handshake**: Performs live `HELO` -> `MAIL FROM` -> `RCPT TO` -> `250 OK / 550 Mailbox Not Found` verification without sending actual messages.
-  - **⚡ Auto-Waterfall Permutation Discovery**: Automatically cycles through all corporate email formulas (`first.last`, `firstlast`, `flast`, `first_last`, `last.first`, `lastf`, `first`) when an address returns 550. Automatically updates to the winning `🟢 250 OK` deliverable format, or flags as `🔴 All Formats Failed` in red.
-  - **🔄 Email Pattern Reformatting & Retry Studio**: 1-click modal window to convert undeliverable addresses (e.g. `ali.cankal` ➔ `alicankal`, `acankal`, `ali_cankal`, `cankal.ali`), test live MX/SMTP deliverability on the fly, and apply deliverable emails back to your dataset.
-  - **Preserves Original CSV Data on Export**: When exporting verified records to CSV, all original columns and metadata from your imported file are 100% preserved with new verification status columns appended (`Verification_Status`, `Deliverability_Badge`, `Primary_MX_Host`, `SMTP_Response_Code`, `Response_Time_MS`).
-- **📋 Interactive Lead Table & Enriched CSV Exports**:
-  - Dedicated interactive multi-column table (`ttk.Treeview`) with live sorting, color-coded badges, and 1-click **⚡ Batch Enrich** or **⚡ Enrich Selected** contact actions.
-  - Export full enriched dataset with **💾 Export Enriched CSV** (First Name, Surname, Job Title, Organisation, Enriched Email, Deliverability Status, Domain, MX Server, Phone, URL).
-- **🌐 Multi-Engine Search Support**:
-  - Google, Bing, DuckDuckGo, Brave Search, Yahoo, Yandex, and Ahmia (Tor/Onion web).
-- **🧅 Tor SOCKS5 Proxy Routing**:
-  - 1-click option to route queries through Tor (`socks5://127.0.0.1:9150` or `9050`) for anonymous searches.
-- **🛠️ Dual-Strategy Query Builder & Ready Templates**:
-  - **Sub-Tab 1 (Targeted Site & Profile Search)**: Live query generator for precision dorking with `site:` restrictions (LinkedIn, Environment Agency Public Register, SEPA, NRW, government portals), job titles, location filters, email & phone hunting dorks, and filetype filters.
-  - **Sub-Tab 2 (Generalized Industry & Facility Search)**: Multi-group boolean query builder for discovering commercial facilities, distribution networks, fleet depots, and multi-site operations across the open web with 1-click facility templates, operational scale filters, regional boundary groups, and negative exclusions.
-  - **Pre-Populated UK Environmental Register Searches**:
-    1. *EA England Waste Permitting & Operations*: `site:environment.data.gov.uk/public-register/ ("Environmental Permitting Regulations – Waste Operations" OR "Materials recovery" OR "Waste transfer") -council -civic -household -tip -hwrc`
-    2. *EA England Registered Carriers & Brokers*: `site:environment.data.gov.uk/public-register/ "Register of Waste Carriers, Brokers and Dealers" ("Carrier and Broker" OR "Dealer") ("Limited" OR "Ltd" OR "PLC") -council -individual`
-    3. *SEPA Scotland Waste Authorisations*: `site:sepa.org.uk ("Register of Waste Carriers" OR "authorisations" OR "waste transfer" OR "materials recovery") ("Limited" OR "Ltd" OR "PLC") -council`
-    4. *NRW Wales Waste Permitting*: `site:naturalresources.wales ("waste permitting" OR "waste carriers, brokers and dealers" OR "waste transfer") ("Limited" OR "Ltd" OR "PLC") -council -cyngor`
-    5. *Combined UK Regulators*: `(site:environment.data.gov.uk/public-register/ OR site:sepa.org.uk OR site:naturalresources.wales) ("waste operations" OR "materials recovery" OR "waste transfer station" OR "waste carrier") ("Limited" OR "Ltd" OR "PLC") -council -cyngor -civic -household -tip -hwrc`
-- **📥 Direct Open Data & Public Register Downloader (No Web Scraping Needed)**:
-  - **Direct Bulk Dataset Downloads**: Pulls complete national registers directly via open data links and archives (ZIP/CSV) with zero CAPTCHAs, search engine rate limits, or blocks.
-  - **Built-in Official Portals & Registries**:
-    - *Environment Agency (England)*: Permitted Waste Operations dataset & Registered Waste Carriers/Brokers directory.
-    - *NFCC (National Fire Chiefs Council)*: UK Chief Fire Officers Directory parser (extracts names, leadership titles, and fire services).
-    - *SEPA (Scotland)*: Scottish Waste Carriers Register & Public Authorisations portal.
-    - *Natural Resources Wales*: Welsh environmental permits, exemptions, and carrier registers.
-    - *data.gov.uk*: Central UK open government data portal.
-  - **Custom Link Fetcher & Local File Importer**: Paste ANY custom URL (direct `.csv`, `.zip`, `.xlsx`, or web directory page) or load local files from disk.
-  - **Persistent Saved Sources (`registry_sources.json`)**: Save and manage custom registry URLs permanently in a convenient dropdown.
-  - **1-Click Bridges**: Instantly send loaded registry records to **Tab 2 (Leads Table)** for automated domain resolution and email synthesis, or to **Tab 3 (Verifier)** for MX/SMTP mail server checks.
-- **📖 Comprehensive Search Operators Cheat Sheet**:
-  - Integrated cheatsheet with 1-click templates for developers, cybersecurity researchers, and lead generators.
-  - Hover tooltips and `(?)` help badges explaining every search operator.
-- **🔑 Google Authenticated Session Profile**:
-  - 1-click Google login tool that stores trusted cookies and user credentials locally, permanently bypassing robotic reCAPTCHA blocks.
-- **👻 Multi-Mode Browser Visibility**:
-  - **Silent Headless Mode (Default)**: Runs 100% invisibly in the background.
-  - **Minimized Corner Window**: Keeps the browser parked as a tiny widget in the bottom corner of your screen.
-  - **Normal Window**: Opens full-size browser for manual inspection or complex CAPTCHA solving.
-  - **Smart CAPTCHA Auto-Popup**: Automatically opens a visible window only when a CAPTCHA challenge is detected and auto-minimizes once completed.
-- **📜 Query History Log**:
-  - Automatically logs every query with timestamps and search engines to `search_history.log` with 1-click query recall.
+### 🌐 1. Multi-Engine Search & Scraping
+- **Supported Engines**: Google, Bing, DuckDuckGo, Brave Search, Yahoo, Yandex, and Ahmia (Tor darknet).
+- **Anti-Bot & Anti-CAPTCHA Architecture**:
+  - **Authenticated Google Session Profile**: 1-click Google account login that saves session cookies locally, bypassing robotic reCAPTCHA blocks.
+  - **Smart CAPTCHA Detection**: Automatically pops up a visible browser window only when a verification challenge is detected, then resumes silently once completed.
+  - **Browser Visibility Modes**: Silent Headless (default), Minimized Corner Widget, or Full Window.
+  - **Tor SOCKS5 Proxy Routing**: 1-click routing through Tor (`socks5://127.0.0.1:9150` or `9050`) for anonymous queries.
+  - **Configurable Delays**: Per-page scraping rate-limit prevention and custom timeouts.
+
+### 🛠️ 2. Dual-Strategy Query Builder & Search Templates
+- **Sub-Tab 1: Targeted Site & Profile Search (`site:`)**:
+  - Laser-targeted dork generator for platforms like LinkedIn (`site:linkedin.com/in/`), GitHub, StackOverflow, corporate domains, and government registries.
+  - Multi-parameter filters: Organization/Company, Job Titles (with automatic boolean `OR` formatting), Geographic Locations, Negative Keyword Exclusions (`-`), Filetypes (`filetype:pdf`, `filetype:xlsx`), and Public Contact Dorks (hunting `@gmail`, `@outlook`, and phone numbers).
+- **Sub-Tab 2: Generalized Multi-Group Boolean Query Builder**:
+  - Constructs advanced multi-group queries across the open web to discover commercial facilities, regional hubs, corporate headquarters, and multi-site operations.
+  - Combines Industry Keywords, Operational Scale Triggers (*"multiple sites"*, *"head office"*, *"nationwide"*), Geographic Filters, and Negative Noise Exclusions (*-jobs -careers -directory -news*).
+- **Pre-Configured Dork Recipes**: Built-in 1-click templates for B2B Lead Generation, Cybersecurity OSINT, Developer Code & Error Hunting, and Public Registries.
+
+### ⚡ 3. Automated Lead Parsing & Email Enrichment
+- **Entity Parsing**: Automatically parses raw search result snippets to extract First Name, Last Name, Full Name, Job Role, and Company / Organisation.
+- **Domain Resolution Engine**: Maps company and public sector names to verified corporate domain names via built-in and customizable sector dictionaries (`data/domains.json`).
+- **Corporate Pattern Synthesizer**: Generates standard email permutations (`first.last@domain`, `flast@domain`, `firstlast@domain`, `first_last@domain`, `last.first@domain`, etc.).
+- **DNS MX Mailbox Verification**: Resolves live DNS MX records in real-time via `dnspython` to verify active mail servers (Microsoft 365, Google Workspace, Mimecast, Proofpoint).
+- **Deliverability Status Badges**:
+  - `🟢 Valid (MX Verified)`: Mail server active and verified.
+  - `🟡 Risky`: Catch-all domain or unconfirmed mailbox.
+  - `⚪ Not Found`: Missing domain mapping.
+  - `🔴 Invalid (No MX)`: Dead or non-existent mail domain.
+- **Modular API Fallbacks**: Works 100% free with the built-in DNS MX synthesizer or integrates optionally with external enrichment APIs (Hunter.io, Apollo.io, Snov.io).
+
+### 🛡️ 4. Bulk Email & CSV Deliverability Verifier (DNS MX & SMTP Handshake)
+- **Flexible Input Methods**:
+  - **Option A (CSV File Import)**: Upload any external `.csv` dataset, auto-detect the email column, and verify hundreds of addresses in bulk.
+  - **Option B (Multi-Line Manual Paste)**: Paste raw emails, comma-separated lists, or `Name, email@domain.com` formatted lines.
+- **Zero-Spam SMTP Handshake**: Connects directly to the recipient's mail exchange server on port 25 (`HELO` -> `MAIL FROM` -> `RCPT TO` -> `250 OK / 550 Mailbox Not Found`) without ever sending test messages.
+- **⚡ Auto-Waterfall Permutation Discovery**: Automatically cycles through all corporate email formulas on `550 User Not Found` until finding the winning `🟢 250 OK` deliverable format, or flags as `🔴 All Formats Failed`.
+- **🔄 Reformat & Retry Studio**: Interactive modal window to reformat undeliverable addresses and test live deliverability on the fly.
+- **Preserves 100% Original CSV Data**: All original columns and metadata from imported spreadsheets are preserved with verification results appended (`Verification_Status`, `Deliverability_Badge`, `Primary_MX_Host`, `SMTP_Response_Code`, `Response_Time_MS`).
+
+### 📥 5. Direct Open Data & Public Register Downloader
+- **Bulk Dataset Ingestion**: Downloads complete national registers and open data archives (ZIP, CSV, XLSX) directly with zero search engine rate limits, blocks, or CAPTCHAs.
+- **Custom URL & Local Importer**: Ingest any custom registry URL or local file from disk.
+- **1-Click Bridges**: Send loaded open data records directly to the **Leads Table (Tab 2)** for email enrichment or to the **Verifier (Tab 3)** for mail server testing.
+
+### 🌐 6. Embedded Background REST API Server
+- Starts a lightweight local background REST API on `http://127.0.0.1:8765`:
+  - `POST /api/enrich`: Programmatic contact enrichment endpoint.
+  - `GET /api/health`: Health and status monitoring endpoint.
 
 ---
 
 ## 🚀 Quick Start
 
 ### 1. Prerequisites
-- Python 3.8+
-- Google Chrome installed
+- **Python**: 3.8 or higher
+- **Google Chrome**: Installed on the host system (for Selenium web scraping)
 
 ### 2. Installation
-Clone this repository and install the dependencies:
+Clone the repository and install dependencies:
 ```bash
 git clone https://github.com/cankalsoftware/Google-Scrape.git
 cd Google-Scrape
@@ -88,104 +80,98 @@ python scraper_gui.py
 
 ---
 
-## 🛠️ Usage Guide
+## 🛠️ General Usage Workflow
 
-### 1. Build Your Query & Search
-1. In **Tab 1 (Query Builder & Presets)**, choose your search engine (Google, Bing, Brave, DuckDuckGo) or load a pre-configured template.
-2. Select your search strategy sub-tab:
-   - **🎯 Tab 1 (Targeted Site & Profile Search)**: Restrict to specific sites like LinkedIn with job roles and location filters.
-   - **🌐 Tab 2 (Generalized Industry & Facility Search)**: Build multi-group boolean searches combining facility types (e.g. *Materials Recovery Facilities*, *Distribution Hubs*), operational footprint (*multiple sites*, *depots across*), geographic scope (*UK*, *England*, *Scotland*, *Wales*), and negative exclusions (*-council -civic -household -tip -hwrc -.gov.uk*). Click **`⭐ Load Waste & Facility Example`** for 1-click loading.
-3. Click **🚀 Search & Extract Leads**.
+```mermaid
+graph LR
+    A["1. Build Query (Tab 1)"] --> B["2. Scrape & Extract"]
+    B --> C["3. Batch Enrich (Tab 2)"]
+    C --> D["4. Verify Mailboxes (Tab 3)"]
+    D --> E["5. Export Enriched CSV"]
+```
 
-### 2. Enrich Leads & Verify Emails
+### 1. Build Query & Scrape Leads
+1. In **Tab 1 (Query Builder & Presets)**, select your target search engine (Google, Bing, Brave, DuckDuckGo).
+2. Choose your query strategy:
+   - **Targeted Search**: Enter a target site (e.g. `site:linkedin.com/in/`), industry keyword, target job titles, and location.
+   - **Generalized Boolean Search**: Combine industry terms, operational footprint scale keywords, and negative exclusions.
+3. Set your desired **Pages to Scrape** and **Delay (sec)**.
+4. Click **`🚀 Search & Extract Leads`**.
+
+### 2. Enrich Leads & Synthesize Emails
 1. Switch to **Tab 2 (Extracted Results & Text Box)**.
-2. Review the scraped contacts in the **📋 Interactive Table**.
-3. Click **`⚡ Batch Enrich Leads`** to resolve official domains, generate corporate email addresses (`first.last@domain`), and check DNS MX server deliverability.
-4. Click **`💾 Export Enriched CSV`** to export a clean spreadsheet ready for CRM or outreach with columns:
-   - `First Name`, `Last Name`, `Full Name`, `Job Title / Role`, `Organisation`, `Resolved Domain`, `Enriched Email`, `Deliverability Status`, `MX Server Host`, `Phone`, `LinkedIn Profile URL`.
+2. Review extracted contacts in the **Interactive Table** or switch views (Structured Cards, TSV, CSV, Emails Only).
+3. Click **`⚡ Batch Enrich All`** to automatically resolve corporate domains, generate email address formulas, and verify DNS MX deliverability.
+4. Click **`💾 Export Enriched CSV`** to save your clean dataset.
 
-### 3. Verify Emails via CSV Upload or Manual Paste
+### 3. Bulk Verify External Email Lists
 1. Switch to **Tab 3 (Email & CSV Verifier)**.
-2. Select your input method:
-   - **Option A (CSV File)**: Browse and select any `.csv` (e.g., `Chief_Fire_Officers.csv`). The app auto-detects your email column. Click **`⚡ Load CSV into Verifier`**.
-   - **Option B (Manual Paste)**: Paste one or multiple lines containing email addresses or `Name, email@domain.com` lines, then click **`⚡ Load Pasted Emails into Verifier`**.
-3. Click **`🚀 Start MX/SMTP Verification`** to perform live DNS MX and SMTP Handshake verification (`HELO` -> `MAIL FROM` -> `RCPT TO`).
-4. Click **`💾 Export Verified CSV`** to save your verified file (all original columns from your CSV are 100% preserved with added verification columns).
+2. Choose **Option A (Import CSV File)** to load an external spreadsheet, or **Option B (Manual Paste)** to paste emails.
+3. Click **`🚀 Start MX/SMTP Verification`** to execute live DNS MX checks and zero-spam SMTP handshakes.
+4. Click **`💾 Export Verified CSV`** to save the verified dataset.
 
 ---
 
 ## 🌐 Local REST API Endpoint
 
-The application starts an embedded background REST API server on port `8765`:
+The suite provides an embedded background REST API server running on port `8765`:
 
-- **Health Check**: `GET http://127.0.0.1:8765/api/health`
-- **Enrich Contact**: `POST http://127.0.0.1:8765/api/enrich`
-  ```bash
-  curl -X POST http://127.0.0.1:8765/api/enrich \
-    -H "Content-Type: application/json" \
-    -d '{
-      "full_name": "John Smith",
-      "headline": "Head of IT",
-      "organisation": "London Fire Brigade"
-    }'
-  ```
+### Health Check
+```bash
+curl -X GET http://127.0.0.1:8765/api/health
+```
+
+### Contact Enrichment
+```bash
+curl -X POST http://127.0.0.1:8765/api/enrich \
+  -H "Content-Type: application/json" \
+  -d '{
+    "full_name": "Jane Doe",
+    "headline": "Chief Technology Officer",
+    "organisation": "Acme Global Technologies"
+  }'
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "first_name": "Jane",
+  "last_name": "Doe",
+  "domain": "acmeglobal.com",
+  "email": "jane.doe@acmeglobal.com",
+  "deliverability": "Valid (MX Verified)",
+  "mx_host": "mail.protection.outlook.com"
+}
+```
 
 ---
 
-## 🔒 Google Login & Anti-Bot Protection
-
-If you want to run heavy Google Dork queries without CAPTCHAs:
-1. Click **`🔑 Log in to Google`** in Tab 1.
-2. Log into your Google Account in the opened Chrome window and close it when finished.
-3. The scraper will now automatically reuse your authenticated Google session.
-
----
-
-## 🏗️ Modular Architecture & Hybrid Storage Model
-
-The suite follows a **Hybrid Storage Model** separating UI presentation from dynamic configurations and transactional database state:
+## 🏗️ Architecture & Extensibility
 
 ```
 Google Scrape/
-├── scraper_gui.py             # 🖥️ Main Tkinter Application & UI Controller
-├── data_loader.py             # 🔄 Resilient JSON Configuration Loader & Fallback Manager
-├── storage.py                 # 🗄️ SQLite Database Manager & Persistent MX Cache
+├── scraper_gui.py             # Main Tkinter Desktop Application & UI Controller
+├── data_loader.py             # JSON Configuration Loader & Fallback Manager
+├── storage.py                 # SQLite Database Manager & Persistent MX Cache
 │
-├── data/                      # 📁 Configuration & Reference Data (JSON)
-│   ├── domains.json           # UK Public Sector, Environment & Transport domain dictionaries
-│   ├── presets.json           # Targeted profile and generalized multi-group search templates
-│   ├── dorks_cheatsheet.json  # Search operators, dev dorks, and OSINT security recipes
-│   └── registry_sources.json  # Pre-configured official open data and public register links
+├── data/                      # Configuration & Reference Dictionaries (JSON)
+│   ├── domains.json           # Sector & company domain mappings
+│   ├── presets.json           # Targeted profile & generalized search templates
+│   ├── dorks_cheatsheet.json  # Search operators, dev recipes & OSINT templates
+│   └── registry_sources.json  # Open data download sources & registry URLs
 │
-└── db/                        # 📁 Transactional State Storage (SQLite)
-    └── scraper_storage.db     # Persistent DNS MX Cache, Search Query History & Leads DB
+└── db/                        # Transactional State Persistence (SQLite)
+    └── scraper_storage.db     # Persistent DNS MX Cache, Query History & Leads DB
 ```
 
-### 1. JSON Configuration Files (`data/`)
-- **`data/domains.json`**: Contains structured domain mappings across sectors:
-  - `fire_services`: 50+ UK Fire & Rescue Services (`.gov.uk`, `.org.uk`, `.net`).
-  - `environment`: Environment Agency, SEPA, and Natural Resources Wales registers.
-  - `transport_highways`: National Highways, Highways England, TfL, Network Rail, DVSA, DVLA.
-  - `nhs`: NHS England, trusts, and healthcare authorities (`.nhs.uk`).
-  - `councils`: City, borough, and county councils (`.gov.uk`).
-  - `police`: UK police constabularies (`.police.uk`).
-  - *Customization*: Add any company or sector domain directly to `data/domains.json` without modifying Python source code.
-- **`data/presets.json`**: Pre-configured targeted and generalized search templates. Adding a new industry search to JSON automatically makes it available across all UI dropdowns.
-- **`data/dorks_cheatsheet.json`**: Full reference of Google Dork operators, developer debugging recipes, and security patterns.
-- **`data/registry_sources.json`**: Direct open data download portals for Tab 4.
-
-### 2. SQLite Database Persistence (`db/scraper_storage.db`)
-- **Persistent DNS MX Cache (`mx_cache`)**:
-  - Automatically caches DNS MX lookups and Catch-All server tests across app restarts.
-  - Subsequent verification runs on known domains execute at **0ms in-memory/disk speed** with zero network DNS round-trips.
-- **Search Query History (`search_history`)**:
-  - High-performance, timestamped audit log of all executed searches, engine types, and collected lead counts.
-  - 1-click recall into Query Builder.
-- **Saved Leads Table (`saved_leads`)**:
-  - ACID-safe persistent backup for scraped contacts and enriched corporate email records.
+### Customizing Configuration Files (`data/`)
+- **`data/domains.json`**: Add new industry sectors or company name-to-domain mappings without editing Python code.
+- **`data/presets.json`**: Add reusable query templates for specific industries or search patterns.
+- **`data/dorks_cheatsheet.json`**: Expand the built-in search operator library and 1-click recipes.
+- **`data/registry_sources.json`**: Save custom open data download links and register sources.
 
 ---
 
 ## 📄 License
-MIT License. Free for personal and commercial use.
-
+MIT License. Free for personal, academic, and commercial use.

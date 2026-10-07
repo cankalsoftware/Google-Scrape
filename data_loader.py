@@ -64,12 +64,14 @@ def get_domain_lookup(industry: str = "all") -> dict:
         return domains.get("environment", {})
     elif ind in ("transport", "highways", "national_highways", "roads"):
         return domains.get("transport_highways", {})
+    elif ind in ("tourism", "hospitality", "hotel", "hotels", "restaurant", "restaurants", "travel"):
+        return domains.get("hospitality_tourism", {})
     elif ind in ("fire", "fire_services", "rescue"):
         return domains.get("fire_services", {})
     else:
-        # Combined public sector and infrastructure
+        # Combined public sector, infrastructure and major sectors
         combined = {}
-        for sector in ["fire_services", "environment", "transport_highways", "police", "nhs", "councils"]:
+        for sector in ["fire_services", "environment", "transport_highways", "hospitality_tourism", "police", "nhs", "councils"]:
             combined.update(domains.get(sector, {}))
         return combined
 

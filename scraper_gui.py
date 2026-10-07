@@ -1604,6 +1604,110 @@ class TreeviewHoverToolTip:
                 pass
 
 
+class PlaceholderHelper:
+    """
+    Attaches responsive, guided placeholder text to an Entry or ttk.Entry widget.
+    Displays placeholder text in muted grey (#94A3B8) when empty.
+    Hides placeholder text on focus or when populated with real query criteria.
+    """
+    def __init__(self, entry_widget, placeholder_text, string_var=None, on_change=None):
+        self.entry = entry_widget
+        self.placeholder = placeholder_text
+        self.var = string_var
+        self.on_change = on_change
+        self.is_placeholder = False
+        self.placeholder_color = "#94A3B8"
+        self.normal_color = "#0F172A"
+
+        self.entry.bind("<FocusIn>", self._on_focus_in, add="+")
+        self.entry.bind("<FocusOut>", self._on_focus_out, add="+")
+        self.entry.bind("<KeyRelease>", self._on_key_release, add="+")
+
+        val = self._get_current_raw()
+        if not val or val == self.placeholder or val.startswith("e.g.") or val.startswith("(e.g."):
+            self.show()
+        else:
+            self.entry.configure(foreground=self.normal_color)
+
+    def _get_current_raw(self):
+        if self.var:
+            return self.var.get().strip()
+        return self.entry.get().strip()
+
+    def show(self):
+        self.is_placeholder = True
+        try:
+            self.entry.configure(foreground=self.placeholder_color)
+        except Exception:
+            pass
+        if self.var:
+            self.var.set(self.placeholder)
+        else:
+            self.entry.delete(0, tk.END)
+            self.entry.insert(0, self.placeholder)
+
+    def hide(self):
+        if self.is_placeholder:
+            self.is_placeholder = False
+            try:
+                self.entry.configure(foreground=self.normal_color)
+            except Exception:
+                pass
+            if self.var:
+                self.var.set("")
+            else:
+                self.entry.delete(0, tk.END)
+
+    def _on_focus_in(self, event=None):
+        if self.is_placeholder:
+            self.hide()
+
+    def _on_focus_out(self, event=None):
+        val = self._get_current_raw()
+        if not val or val == self.placeholder or val.startswith("e.g.") or val.startswith("(e.g."):
+            self.show()
+        else:
+            self.is_placeholder = False
+            try:
+                self.entry.configure(foreground=self.normal_color)
+            except Exception:
+                pass
+
+    def _on_key_release(self, event=None):
+        val = self._get_current_raw()
+        if self.is_placeholder and val != self.placeholder:
+            self.is_placeholder = False
+            try:
+                self.entry.configure(foreground=self.normal_color)
+            except Exception:
+                pass
+        if self.on_change:
+            self.on_change()
+
+    def get_real_value(self):
+        if self.is_placeholder:
+            return ""
+        val = self._get_current_raw()
+        if val == self.placeholder or val.startswith("e.g.") or val.startswith("(e.g."):
+            return ""
+        return val
+
+    def set_real_value(self, val):
+        if not val or val == self.placeholder:
+            self.show()
+        else:
+            self.is_placeholder = False
+            try:
+                self.entry.configure(foreground=self.normal_color)
+            except Exception:
+                pass
+            if self.var:
+                self.var.set(val)
+            else:
+                self.entry.delete(0, tk.END)
+                self.entry.insert(0, val)
+
+
 
 class GoogleLeadScraperSuite(tk.Tk):
     def __init__(self):
@@ -2097,6 +2201,18 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.preset_var = tk.StringVar(value="custom")
         presets = [
             ("-- Clean / Blank Form --", "custom"),
+            ("--- 🏖️ TOURISM, HOSPITALITY & TRAVEL SECTOR ---", "header_tourism"),
+            ("🏖️ Tourism: All-in-One (Hotels, Restorants, Tours, Transfers, Agencies)", "gen_tourism_all"),
+            ("🏨 Tourism: Hotels & Luxury Resorts", "gen_hotels_resorts"),
+            ("🍽️ Tourism: Restorants & Dining Chains", "gen_restaurants"),
+            ("🗺️ Tourism: Tour Operators & Excursions", "gen_tour_operators"),
+            ("🚐 Tourism: Airport Transfers & Passenger Transport", "gen_transfers"),
+            ("✈️ Tourism: Holiday Agencies & Travel Agents", "gen_holiday_agencies"),
+            ("🎯 Tourism & Hospitality Leadership (LinkedIn)", "tourism_hospitality_leaders"),
+            ("🎯 Hotel & Resort Directors (LinkedIn)", "hotel_resort_directors"),
+            ("🎯 Tour Operators & Travel Management (LinkedIn)", "tour_operators_management"),
+            ("🎯 Holiday & Travel Agency Execs (LinkedIn)", "holiday_agencies_execs"),
+            ("🎯 Airport Transfers & Transport Execs (LinkedIn)", "transfer_transport_execs"),
             ("--- 🔥 HIGH FIRE & SMOKE HAZARD MULTI-SITE INDUSTRIES ---", "header_fire"),
             ("♻️ Materials Recovery & Waste Facilities (UK)", "gen_waste"),
             ("🧴 Plastics Recycling & Polymer Reprocessing", "gen_plastics"),
@@ -2305,13 +2421,13 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         r2 = ttk.Frame(self.subtab_targeted)
         r2.pack(fill=tk.X, pady=2)
         
-        hl_org = self._create_help_label(r2, "Industry / Keyword:", "Keywords, company names, or sectors to search for. E.g. \"Fire and Rescue\" or \"NHS Trust\".")
+        hl_org = self._create_help_label(r2, "Industry / Keyword:", "Keywords, company names, or sectors to search for. E.g. \"Hilton Hotels\", \"Tourism Agency\", or \"NHS Trust\".")
         hl_org.pack(side=tk.LEFT)
         
         self.org_var = tk.StringVar(value="")
         org_entry = ttk.Entry(r2, textvariable=self.org_var, font=("Segoe UI", 9), width=50)
         org_entry.pack(side=tk.LEFT, padx=(0, 8), fill=tk.X, expand=True)
-        org_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
+        self.org_ph = PlaceholderHelper(org_entry, 'e.g. "Hilton Hotels" OR "Tourism Agency" OR "Marriott"', self.org_var, self._rebuild_query)
         ToolTip(org_entry, "Enter comma-separated or quoted phrases. Click '+ Quotes/OR' to auto-format.")
         
         btn_org_add = ttk.Button(r2, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.org_var))
@@ -2322,13 +2438,13 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         r3 = ttk.Frame(self.subtab_targeted)
         r3.pack(fill=tk.X, pady=2)
         
-        hl_titles = self._create_help_label(r3, "Job Titles / Roles:", "Job roles or positions to find. E.g. \"Head of IT\" OR \"CTO\" OR \"IT Director\".")
+        hl_titles = self._create_help_label(r3, "Job Titles / Roles:", "Job roles or positions to find. E.g. \"General Manager\", \"Operations Director\", \"Head of Sales\".")
         hl_titles.pack(side=tk.LEFT)
         
         self.titles_var = tk.StringVar(value="")
         titles_entry = ttk.Entry(r3, textvariable=self.titles_var, font=("Segoe UI", 9), width=50)
         titles_entry.pack(side=tk.LEFT, padx=(0, 8), fill=tk.X, expand=True)
-        titles_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
+        self.titles_ph = PlaceholderHelper(titles_entry, 'e.g. ("General Manager" OR "Operations Director" OR "Head of Sales")', self.titles_var, self._rebuild_query)
         ToolTip(titles_entry, "Target job titles or role variations.")
         
         btn_title_add = ttk.Button(r3, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.titles_var))
@@ -2380,10 +2496,10 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         custom_dom_lbl = ttk.Label(r5, text="Domain:")
         custom_dom_lbl.pack(side=tk.LEFT, padx=(4, 2))
         
-        custom_dom_entry = ttk.Entry(r5, textvariable=self.custom_email_domain_var, font=("Segoe UI", 9), width=16)
+        custom_dom_entry = ttk.Entry(r5, textvariable=self.custom_email_domain_var, font=("Segoe UI", 9), width=18)
         custom_dom_entry.pack(side=tk.LEFT, padx=(0, 5))
-        custom_dom_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
-        ToolTip(custom_dom_entry, "Search for company-specific email domain (e.g. acme.com or @acme.com).")
+        self.custom_dom_ph = PlaceholderHelper(custom_dom_entry, 'e.g. @hilton.com', self.custom_email_domain_var, self._rebuild_query)
+        ToolTip(custom_dom_entry, "Search for company-specific email domain (e.g. hilton.com or @hilton.com).")
         
         # Row 6: Exclude Keywords & Filetype
         r6 = ttk.Frame(self.subtab_targeted)
@@ -2395,7 +2511,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.exclude_var = tk.StringVar(value="")
         exclude_entry = ttk.Entry(r6, textvariable=self.exclude_var, font=("Segoe UI", 9), width=32)
         exclude_entry.pack(side=tk.LEFT, padx=(0, 12))
-        exclude_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
+        self.exclude_ph = PlaceholderHelper(exclude_entry, 'e.g. -jobs -recruiter -hiring -intern', self.exclude_var, self._rebuild_query)
         ToolTip(exclude_entry, "Words prefixed with '-' will be excluded from search results.")
         
         hl_filetype = self._create_help_label(r6, "Filetype (filetype:):", "Filters for specific file formats like PDF resumes, Excel sheets, or configuration files.", width=16)
@@ -2439,27 +2555,33 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         intro_frame = ttk.Frame(self.subtab_generalized)
         intro_frame.pack(fill=tk.X, pady=(0, 4))
         
-        lbl_intro = ttk.Label(intro_frame, text="ℹ️ Strategy: Build broad multi-concept queries for facilities, depots, commercial sites & nationwide infrastructure with boolean OR groups and negative exclusions.", foreground="#475569", font=("Segoe UI", 8, "italic"))
+        lbl_intro = ttk.Label(intro_frame, text="ℹ️ Strategy: Build broad multi-concept queries for tourism, hotels, restaurants, facilities, depots & commercial sites with boolean OR groups and negative exclusions.", foreground="#475569", font=("Segoe UI", 8, "italic"))
         lbl_intro.pack(side=tk.LEFT)
         
-        btn_quick_waste = ttk.Button(intro_frame, text="⭐ Load Waste & Facility Example", style="Accent.TButton", command=self._load_waste_facility_example)
+        btn_quick_waste = ttk.Button(intro_frame, text="⭐ Load Tourism Example", style="Accent.TButton", command=lambda: self._load_preset("gen_tourism_all"))
         btn_quick_waste.pack(side=tk.RIGHT)
-        ToolTip(btn_quick_waste, "Instantly loads the Materials Recovery & Waste Facilities search with multiple sites, UK regions, and council exclusions.")
+        ToolTip(btn_quick_waste, "Instantly loads the Tourism: All-in-One search covering hotels, restaurants, tour operators, transfers, and agencies.")
 
         # Row 1: Facility / Industry / Sector Terms (Group 1 - OR)
         r1 = ttk.Frame(self.subtab_generalized)
         r1.pack(fill=tk.X, pady=2)
         
-        hl_ind = self._create_help_label(r1, "Facility / Industry (OR):", "Group 1: Target facility types, industry activities, or site operations. Multiple terms are combined with OR.", width=21)
+        hl_ind = self._create_help_label(r1, "Facility / Industry (OR):", "Group 1: Target tourism sectors, hotels, restaurants, tour operators, transfers, or industry activities. Multiple terms are combined with OR.", width=21)
         hl_ind.pack(side=tk.LEFT)
         
         gen_ind_entry = ttk.Entry(r1, textvariable=self.gen_industry_var, font=("Segoe UI", 9), width=38)
         gen_ind_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
-        gen_ind_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
-        ToolTip(gen_ind_entry, 'Enter facility/industry terms e.g. ("Materials Recovery Facility" OR "waste transfer station" OR "commercial recycling facility") or comma-separated.')
+        self.gen_ind_ph = PlaceholderHelper(gen_ind_entry, 'e.g. ("Hotels" OR "Restaurants" OR "Tour Operators" OR "Transfer" OR "Holiday Agencies")', self.gen_industry_var, self._rebuild_query)
+        ToolTip(gen_ind_entry, 'Enter industry/sector terms e.g. ("Hotels" OR "Restaurants" OR "Tour Operators" OR "Transfer" OR "Holiday Agencies") or comma-separated.')
         
         self.gen_category_combo = ttk.Combobox(r1, values=[
             "Choose Preset Category...",
+            "🏖️ Tourism: All-in-One (Hotels, Restorants, Tours, Transfers, Agencies)",
+            "🏨 Tourism: Hotels, Resorts & Luxury Accommodation",
+            "🍽️ Tourism: Restorants, Cafes & Fine Dining Chains",
+            "🗺️ Tourism: Tour Operators, Excursions & Guided Tours",
+            "🚐 Tourism: Airport Transfers & Passenger Transport",
+            "✈️ Tourism: Holiday Agencies, Travel Agents & Booking",
             "♻️ Materials Recovery & Waste Facilities",
             "🧴 Plastics Recycling & Polymer Processing",
             "🪵 Wood, Timber & Paper Recycling",
@@ -2481,7 +2603,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.gen_category_combo.current(0)
         self.gen_category_combo.pack(side=tk.LEFT, padx=(0, 6))
         self.gen_category_combo.bind("<<ComboboxSelected>>", self._on_gen_category_selected)
-        ToolTip(self.gen_category_combo, "Select pre-built facility or industry keyword groups.")
+        ToolTip(self.gen_category_combo, "Select pre-built tourism, hospitality, facility, or industry keyword groups.")
         
         btn_ind_add = ttk.Button(r1, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.gen_industry_var))
         btn_ind_add.pack(side=tk.RIGHT)
@@ -2491,17 +2613,17 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         r2 = ttk.Frame(self.subtab_generalized)
         r2.pack(fill=tk.X, pady=2)
         
-        hl_scale = self._create_help_label(r2, "Scale / Multi-Site (OR):", "Group 2: Target footprint, multi-location indicators, depots, headquarters, or national operations.", width=21)
+        hl_scale = self._create_help_label(r2, "Scale / Multi-Site (OR):", "Group 2: Target footprint, multi-location indicators, chain branches, depots, headquarters, or national operations.", width=21)
         hl_scale.pack(side=tk.LEFT)
         
         gen_scale_entry = ttk.Entry(r2, textvariable=self.gen_scale_var, font=("Segoe UI", 9), width=38)
         gen_scale_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
-        gen_scale_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
-        ToolTip(gen_scale_entry, 'Enter operational footprint terms e.g. ("multiple sites" OR "depots across" OR "nationwide" OR "head office").')
+        self.gen_scale_ph = PlaceholderHelper(gen_scale_entry, 'e.g. ("multiple locations" OR "chain" OR "nationwide" OR "head office")', self.gen_scale_var, self._rebuild_query)
+        ToolTip(gen_scale_entry, 'Enter operational footprint terms e.g. ("multiple locations" OR "chain" OR "depots across" OR "head office").')
         
         self.gen_scale_combo = ttk.Combobox(r2, values=[
             "Choose Scale...",
-            "🏢 Multi-Site, Depots & Nationwide",
+            "🏢 Multi-Site, Chain & Nationwide",
             "📍 Regional Hubs & Operating Centres",
             "🏛️ Corporate HQ & Group Operations",
             "🌐 UK-Wide & National Coverage",
@@ -2520,19 +2642,20 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         r3 = ttk.Frame(self.subtab_generalized)
         r3.pack(fill=tk.X, pady=2)
         
-        hl_geo = self._create_help_label(r3, "Country / Region (OR):", "Group 3: Target countries, home nations, counties, or regional territories.", width=21)
+        hl_geo = self._create_help_label(r3, "Country / Region (OR):", "Group 3: Target countries, tourism destinations, home nations, counties, or regional territories.", width=21)
         hl_geo.pack(side=tk.LEFT)
         
         gen_geo_entry = ttk.Entry(r3, textvariable=self.gen_geo_var, font=("Segoe UI", 9), width=38)
         gen_geo_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
-        gen_geo_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
-        ToolTip(gen_geo_entry, 'Enter location terms e.g. ("United Kingdom" OR "UK" OR "England" OR "Scotland" OR "Wales").')
+        self.gen_geo_ph = PlaceholderHelper(gen_geo_entry, 'e.g. ("United Kingdom" OR "London" OR "Europe" OR "United States")', self.gen_geo_var, self._rebuild_query)
+        ToolTip(gen_geo_entry, 'Enter location terms e.g. ("United Kingdom" OR "London" OR "Europe" OR "United States").')
         
         self.gen_geo_combo = ttk.Combobox(r3, values=[
             "Choose Region...",
             "🇬🇧 United Kingdom & Home Nations",
             "🏴󠁧󠁢󠁥󠁮󠁧󠁿 England & Greater London",
             "🏴󠁧󠁢󠁳󠁣󠁴󠁿 Scotland & Northern Ireland",
+            "🏖️ Europe & Mediterranean Tourism Destinations",
             "🇺🇸 United States Nationwide",
             "🇪🇺 Europe & Major Nations",
             "(Worldwide / Open Region)"
@@ -2550,16 +2673,17 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         r4 = ttk.Frame(self.subtab_generalized)
         r4.pack(fill=tk.X, pady=2)
         
-        hl_ex = self._create_help_label(r4, "Negative Exclusions (-):", "Words or domains prefixed with minus '-' will be completely removed from results (e.g. municipal tips, public council pages, job boards).", width=21)
+        hl_ex = self._create_help_label(r4, "Negative Exclusions (-):", "Words or domains prefixed with minus '-' will be completely removed from results (e.g. OTA booking aggregators, municipal tips, job boards).", width=21)
         hl_ex.pack(side=tk.LEFT)
         
         gen_ex_entry = ttk.Entry(r4, textvariable=self.gen_exclude_var, font=("Segoe UI", 9), width=38)
         gen_ex_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
-        gen_ex_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
-        ToolTip(gen_ex_entry, 'Enter negative exclusion terms e.g. -council -civic -household -tip -hwrc -.gov.uk')
+        self.gen_ex_ph = PlaceholderHelper(gen_ex_entry, 'e.g. -jobs -careers -directory -tripadvisor.com -booking.com', self.gen_exclude_var, self._rebuild_query)
+        ToolTip(gen_ex_entry, 'Enter negative exclusion terms e.g. -jobs -careers -directory -tripadvisor.com -booking.com')
         
         self.gen_exclude_combo = ttk.Combobox(r4, values=[
             "Choose Exclusion Pattern...",
+            "🏖️ Exclude OTA Booking Portals (TripAdvisor, Booking, Expedia, Airbnb, etc.)",
             "🛡️ Exclude Directories (Yell, Yelp, 192, Thomson, etc.)",
             "🛡️ Exclude News, Media & Press Outlets (BBC, Guardian, etc.)",
             "🛡️ Exclude Directories + News + Job Boards (Pure Businesses)",
@@ -2574,7 +2698,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.gen_exclude_combo.bind("<<ComboboxSelected>>", self._on_gen_exclude_selected)
         ToolTip(self.gen_exclude_combo, "Select pre-configured negative exclusion cleaners.")
         
-        btn_clear_ex = ttk.Button(r4, text="Clear Exclude", style="Secondary.TButton", command=lambda: (self.gen_exclude_var.set(""), self._rebuild_query()))
+        btn_clear_ex = ttk.Button(r4, text="Clear Exclude", style="Secondary.TButton", command=lambda: (self.gen_exclude_ph.set_real_value(""), self._rebuild_query()))
         btn_clear_ex.pack(side=tk.RIGHT)
         ToolTip(btn_clear_ex, "Clears negative exclusion filters.")
 
@@ -2590,16 +2714,16 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         lbl_intext.pack(side=tk.LEFT, padx=(0, 2))
         gen_intext_entry = ttk.Entry(r5, textvariable=self.gen_intext_var, width=12)
         gen_intext_entry.pack(side=tk.LEFT, padx=(0, 8))
-        gen_intext_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
-        ToolTip(gen_intext_entry, "Optional keyword required in body text (e.g. permit or contact).")
+        self.gen_intext_ph = PlaceholderHelper(gen_intext_entry, 'e.g. reservations', self.gen_intext_var, self._rebuild_query)
+        ToolTip(gen_intext_entry, "Optional keyword required in body text (e.g. reservations or contact).")
         
         # inurl modifier
         lbl_inurl = ttk.Label(r5, text="inurl:")
         lbl_inurl.pack(side=tk.LEFT, padx=(0, 2))
         gen_inurl_entry = ttk.Entry(r5, textvariable=self.gen_inurl_var, width=12)
         gen_inurl_entry.pack(side=tk.LEFT, padx=(0, 8))
-        gen_inurl_entry.bind("<KeyRelease>", lambda e: self._rebuild_query())
-        ToolTip(gen_inurl_entry, "Optional keyword required in URL path (e.g. facilities or locations).")
+        self.gen_inurl_ph = PlaceholderHelper(gen_inurl_entry, 'e.g. hotels', self.gen_inurl_var, self._rebuild_query)
+        ToolTip(gen_inurl_entry, "Optional keyword required in URL path (e.g. hotels or tours).")
         
         # Filetype
         lbl_ft = ttk.Label(r5, text="filetype:")
@@ -2637,22 +2761,52 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self._updating_query = True
         # Targeted fields (Tab 1)
         self.site_preset_var.set("")
-        self.org_var.set("")
-        self.titles_var.set("")
+        if hasattr(self, "org_ph"):
+            self.org_ph.show()
+        else:
+            self.org_var.set("")
+        if hasattr(self, "titles_ph"):
+            self.titles_ph.show()
+        else:
+            self.titles_var.set("")
         self.location_var.set("")
         self.email_dork_var.set(False)
         self.phone_dork_var.set(False)
-        self.custom_email_domain_var.set("")
-        self.exclude_var.set("")
+        if hasattr(self, "custom_dom_ph"):
+            self.custom_dom_ph.show()
+        else:
+            self.custom_email_domain_var.set("")
+        if hasattr(self, "exclude_ph"):
+            self.exclude_ph.show()
+        else:
+            self.exclude_var.set("")
         self.filetype_var.set("None")
         
         # Generalized fields (Tab 2)
-        self.gen_industry_var.set("")
-        self.gen_scale_var.set("")
-        self.gen_geo_var.set("")
-        self.gen_exclude_var.set("")
-        self.gen_intext_var.set("")
-        self.gen_inurl_var.set("")
+        if hasattr(self, "gen_ind_ph"):
+            self.gen_ind_ph.show()
+        else:
+            self.gen_industry_var.set("")
+        if hasattr(self, "gen_scale_ph"):
+            self.gen_scale_ph.show()
+        else:
+            self.gen_scale_var.set("")
+        if hasattr(self, "gen_geo_ph"):
+            self.gen_geo_ph.show()
+        else:
+            self.gen_geo_var.set("")
+        if hasattr(self, "gen_ex_ph"):
+            self.gen_ex_ph.show()
+        else:
+            self.gen_exclude_var.set("")
+        if hasattr(self, "gen_intext_ph"):
+            self.gen_intext_ph.show()
+        else:
+            self.gen_intext_var.set("")
+        if hasattr(self, "gen_inurl_ph"):
+            self.gen_inurl_ph.show()
+        else:
+            self.gen_inurl_var.set("")
         self.gen_site_var.set("")
         self.gen_filetype_var.set("None")
         self.gen_email_dork_var.set(False)
@@ -6266,92 +6420,122 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         except Exception:
             pass
 
+    def _set_ph_field(self, ph_helper, string_var, value):
+        if ph_helper:
+            ph_helper.set_real_value(value)
+        else:
+            string_var.set(value)
+
+    def _clean_field_input(self, text):
+        if not text:
+            return ""
+        t = str(text).strip()
+        if t.startswith("e.g.") or t.startswith("(e.g."):
+            return ""
+        return t
+
     def _on_gen_category_selected(self, event=None):
         val = self.gen_category_combo.get()
-        if "Materials Recovery & Waste" in val:
-            self.gen_industry_var.set('("Materials Recovery Facility" OR "waste transfer station" OR "commercial recycling facility")')
+        if "Tourism: All-in-One" in val or ("Tourism" in val and "All-in-One" in val):
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("hotels" OR "restaurants" OR "tour operators" OR "airport transfers" OR "holiday agencies" OR "travel agency" OR "luxury resorts")')
+        elif "Hotels" in val:
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("hotels" OR "luxury resorts" OR "boutique hotel" OR "hotel chain" OR "accommodation" OR "hospitality group")')
+        elif "Restorants" in val or "Restaurants" in val:
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("restaurants" OR "fine dining" OR "bistros" OR "restaurant group" OR "hospitality chain" OR "dining venues")')
+        elif "Tour Operators" in val:
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("tour operators" OR "guided tours" OR "sightseeing excursions" OR "adventure travel" OR "travel experiences" OR "day tours")')
+        elif "Transfers" in val or "Airport Transfers" in val:
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("airport transfers" OR "passenger transport" OR "private transfer service" OR "chauffeur service" OR "shuttle service" OR "fleet transfers")')
+        elif "Holiday Agencies" in val or "Travel Agents" in val:
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("holiday agencies" OR "travel agency" OR "travel agents" OR "vacation booking" OR "tourist agency" OR "travel management company")')
+        elif "Materials Recovery & Waste" in val:
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("Materials Recovery Facility" OR "waste transfer station" OR "commercial recycling facility")')
         elif "Plastics Recycling" in val:
-            self.gen_industry_var.set('("plastics recycling" OR "polymer reprocessing" OR "plastic granulate" OR "plastic waste processing" OR "polymer recycling")')
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("plastics recycling" OR "polymer reprocessing" OR "plastic granulate" OR "plastic waste processing" OR "polymer recycling")')
         elif "Wood, Timber & Paper" in val:
-            self.gen_industry_var.set('("wood recycling" OR "timber processing" OR "paper mill" OR "cardboard recycling" OR "biomass wood chip")')
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("wood recycling" OR "timber processing" OR "paper mill" OR "cardboard recycling" OR "biomass wood chip")')
         elif "Farms, Agriculture" in val:
-            self.gen_industry_var.set('("grain drying" OR "agricultural storage" OR "grain silo" OR "farming estate" OR "straw storage" OR "grain store")')
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("grain drying" OR "agricultural storage" OR "grain silo" OR "farming estate" OR "straw storage" OR "grain store")')
         elif "Warehouse Management" in val or "Logistics & Distribution" in val:
-            self.gen_industry_var.set('("warehouse management" OR "3PL fulfillment" OR "logistics distribution centre" OR "bonded warehouse" OR "bulk storage warehouse")')
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("warehouse management" OR "3PL fulfillment" OR "logistics distribution centre" OR "bonded warehouse" OR "bulk storage warehouse")')
         elif "Outside Storage" in val:
-            self.gen_industry_var.set('("outside storage" OR "open yard storage" OR "bulk materials storage" OR "aggregate storage yard" OR "pallet storage depot")')
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("outside storage" OR "open yard storage" OR "bulk materials storage" OR "aggregate storage yard" OR "pallet storage depot")')
         elif "Tyre Recycling" in val:
-            self.gen_industry_var.set('("tyre recycling" OR "tire processing" OR "rubber crumb" OR "pyrolysis plant" OR "retreading depot")')
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("tyre recycling" OR "tire processing" OR "rubber crumb" OR "pyrolysis plant" OR "retreading depot")')
         elif "Battery Storage" in val:
-            self.gen_industry_var.set('("battery energy storage" OR "BESS facility" OR "lithium battery recycling" OR "battery storage facility" OR "grid battery site")')
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("battery energy storage" OR "BESS facility" OR "lithium battery recycling" OR "battery storage facility" OR "grid battery site")')
         elif "Textiles, Fabric" in val:
-            self.gen_industry_var.set('("textile recycling" OR "rag processing" OR "clothing baling" OR "fabric reprocessing" OR "fibre recycling")')
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("textile recycling" OR "rag processing" OR "clothing baling" OR "fabric reprocessing" OR "fibre recycling")')
         elif "Food Processing, Mills" in val:
-            self.gen_industry_var.set('("flour mill" OR "industrial bakery" OR "food processing plant" OR "feed mill" OR "grain milling")')
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("flour mill" OR "industrial bakery" OR "food processing plant" OR "feed mill" OR "grain milling")')
         elif "Chemical & Hazmat" in val or "Chemical & Hazardous" in val:
-            self.gen_industry_var.set('("chemical storage" OR "COMAH site" OR "bulk liquid terminal" OR "hazardous substances" OR "solvents storage")')
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("chemical storage" OR "COMAH site" OR "bulk liquid terminal" OR "hazardous substances" OR "solvents storage")')
         elif "Metal Scrap" in val or "Metal Recycling" in val:
-            self.gen_industry_var.set('("scrap metal yard" OR "metal recycling facility" OR "authorised treatment facility" OR "ATF depollution" OR "car dismantler")')
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("scrap metal yard" OR "metal recycling facility" OR "authorised treatment facility" OR "ATF depollution" OR "car dismantler")')
         elif "Transport & Fleet" in val:
-            self.gen_industry_var.set('("fleet depot" OR "transport depot" OR "haulage depot" OR "operating centre")')
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("fleet depot" OR "transport depot" OR "haulage depot" OR "operating centre")')
         elif "Industrial Manufacturing" in val:
-            self.gen_industry_var.set('("manufacturing plant" OR "processing facility" OR "production site" OR "industrial estate")')
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("manufacturing plant" OR "processing facility" OR "production site" OR "industrial estate")')
         elif "Energy, Biomass" in val:
-            self.gen_industry_var.set('("energy from waste" OR "biomass plant" OR "anaerobic digestion" OR "EfW facility")')
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("energy from waste" OR "biomass plant" OR "anaerobic digestion" OR "EfW facility")')
         elif "Data Centers" in val:
-            self.gen_industry_var.set('("data centre" OR "server farm" OR "colocation facility" OR "telecoms exchange")')
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("data centre" OR "server farm" OR "colocation facility" OR "telecoms exchange")')
         elif "Clear" in val:
-            self.gen_industry_var.set("")
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, "")
         self._rebuild_query()
 
     def _on_gen_scale_selected(self, event=None):
         val = self.gen_scale_combo.get()
         if "Multi-Site" in val:
-            self.gen_scale_var.set('("multiple sites" OR "depots across" OR "nationwide" OR "head office")')
+            self._set_ph_field(getattr(self, "gen_scale_ph", None), self.gen_scale_var, '("multiple locations" OR "chain" OR "branches across" OR "nationwide" OR "head office")')
         elif "Regional Hubs" in val:
-            self.gen_scale_var.set('("regional depots" OR "branches across" OR "operating centres" OR "facilities across")')
+            self._set_ph_field(getattr(self, "gen_scale_ph", None), self.gen_scale_var, '("regional depots" OR "branches across" OR "operating centres" OR "facilities across")')
         elif "Corporate HQ" in val:
-            self.gen_scale_var.set('("head office" OR "corporate headquarters" OR "group operations" OR "registered office")')
+            self._set_ph_field(getattr(self, "gen_scale_ph", None), self.gen_scale_var, '("head office" OR "corporate headquarters" OR "group operations" OR "registered office")')
         elif "UK-Wide" in val:
-            self.gen_scale_var.set('("national coverage" OR "uk-wide" OR "across the uk" OR "network of facilities")')
+            self._set_ph_field(getattr(self, "gen_scale_ph", None), self.gen_scale_var, '("national coverage" OR "uk-wide" OR "across the uk" OR "network of facilities")')
         elif "None" in val:
-            self.gen_scale_var.set("")
+            self._set_ph_field(getattr(self, "gen_scale_ph", None), self.gen_scale_var, "")
         self._rebuild_query()
 
     def _on_gen_geo_selected(self, event=None):
         val = self.gen_geo_combo.get()
-        if "United Kingdom" in val:
-            self.gen_geo_var.set('("United Kingdom" OR "UK" OR "England" OR "Scotland" OR "Wales")')
+        if "Mediterranean Tourism" in val or "Mediterranean" in val:
+            self._set_ph_field(getattr(self, "gen_geo_ph", None), self.gen_geo_var, '("United Kingdom" OR "Spain" OR "France" OR "Italy" OR "Greece" OR "Turkey" OR "Portugal" OR "Europe")')
+        elif "United Kingdom" in val:
+            self._set_ph_field(getattr(self, "gen_geo_ph", None), self.gen_geo_var, '("United Kingdom" OR "UK" OR "England" OR "Scotland" OR "Wales")')
         elif "England & Greater" in val:
-            self.gen_geo_var.set('("England" OR "London" OR "South East" OR "Midlands" OR "North West")')
+            self._set_ph_field(getattr(self, "gen_geo_ph", None), self.gen_geo_var, '("England" OR "London" OR "South East" OR "Midlands" OR "North West")')
         elif "Scotland & Northern" in val:
-            self.gen_geo_var.set('("Scotland" OR "Northern Ireland" OR "Edinburgh" OR "Glasgow" OR "Belfast")')
+            self._set_ph_field(getattr(self, "gen_geo_ph", None), self.gen_geo_var, '("Scotland" OR "Northern Ireland" OR "Edinburgh" OR "Glasgow" OR "Belfast")')
         elif "United States" in val:
-            self.gen_geo_var.set('("United States" OR "USA" OR "nationwide" OR "headquarters")')
+            self._set_ph_field(getattr(self, "gen_geo_ph", None), self.gen_geo_var, '("United States" OR "USA" OR "nationwide" OR "headquarters")')
         elif "Europe" in val:
-            self.gen_geo_var.set('("Europe" OR "EU" OR "Germany" OR "France" OR "Netherlands")')
+            self._set_ph_field(getattr(self, "gen_geo_ph", None), self.gen_geo_var, '("Europe" OR "EU" OR "Germany" OR "France" OR "Netherlands")')
         elif "Worldwide" in val:
-            self.gen_geo_var.set("")
+            self._set_ph_field(getattr(self, "gen_geo_ph", None), self.gen_geo_var, "")
         self._rebuild_query()
 
     def _on_gen_exclude_selected(self, event=None):
         val = self.gen_exclude_combo.get()
-        if "Directories (Yell, Yelp" in val:
-            self.gen_exclude_var.set("-yell.com -yelp.co.uk -yelp.com -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories")
+        if "OTA Booking Portals" in val or "TripAdvisor, Booking" in val:
+            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "-tripadvisor.com -booking.com -expedia.com -hotels.com -airbnb.com -trivago.com -kayak.com -skyscanner.net -jobs -careers -recruiting -news -directory")
+        elif "Directories (Yell, Yelp" in val:
+            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "-yell.com -yelp.co.uk -yelp.com -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories")
         elif "News, Media & Press" in val:
-            self.gen_exclude_var.set("-news -bbc.co.uk -theguardian.com -dailymail.co.uk -thesun.co.uk -mirror.co.uk -telegraph.co.uk -itv.com -reuters.com -bloomberg.com -article -story")
+            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "-news -bbc.co.uk -theguardian.com -dailymail.co.uk -thesun.co.uk -mirror.co.uk -telegraph.co.uk -itv.com -reuters.com -bloomberg.com -article -story")
         elif "Directories + News + Job" in val:
-            self.gen_exclude_var.set("-yell.com -yelp.co.uk -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories -news -bbc.co.uk -theguardian.com -dailymail.co.uk -jobs -careers -vacancies")
+            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "-yell.com -yelp.co.uk -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories -news -bbc.co.uk -theguardian.com -dailymail.co.uk -jobs -careers -vacancies")
         elif "Council Tips + Directories" in val:
-            self.gen_exclude_var.set("-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -yell.com -yelp.co.uk -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -directory -news -bbc.co.uk")
+            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -yell.com -yelp.co.uk -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -directory -news -bbc.co.uk")
         elif "Municipal/Council Tips & .gov.uk" in val:
-            self.gen_exclude_var.set("-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -fish4")
+            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -fish4")
         elif "Job & Recruitment" in val:
-            self.gen_exclude_var.set("-jobs -recruiting -indeed -careers -vacancies -totaljobs -reed -fish4 -cv-library")
+            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "-jobs -recruiting -indeed -careers -vacancies -totaljobs -reed -fish4 -cv-library")
         elif "Public Sector" in val:
-            self.gen_exclude_var.set("-gov -council -nhs -police -.gov.uk -.nhs.uk")
+            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "-gov -council -nhs -police -.gov.uk -.nhs.uk")
         elif "No Exclusions" in val:
-            self.gen_exclude_var.set("")
+            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "")
         self._rebuild_query()
 
     def _load_waste_facility_example(self):
@@ -6359,18 +6543,18 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.criteria_notebook.select(self.subtab_generalized)
         self.active_criteria_mode = "generalized"
         self._updating_query = True
-        self.gen_industry_var.set('("Materials Recovery Facility" OR "waste transfer station" OR "commercial recycling facility")')
-        self.gen_scale_var.set('("multiple sites" OR "depots across" OR "nationwide" OR "head office")')
-        self.gen_geo_var.set('("United Kingdom" OR "UK" OR "England" OR "Scotland" OR "Wales")')
-        self.gen_exclude_var.set('-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -yell.com -yelp.co.uk -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories -news -bbc.co.uk -theguardian.com -dailymail.co.uk -thesun.co.uk -mirror.co.uk -telegraph.co.uk -itv.com')
-        self.gen_intext_var.set("")
-        self.gen_inurl_var.set("")
+        self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, '("Materials Recovery Facility" OR "waste transfer station" OR "commercial recycling facility")')
+        self._set_ph_field(getattr(self, "gen_scale_ph", None), self.gen_scale_var, '("multiple sites" OR "depots across" OR "nationwide" OR "head office")')
+        self._set_ph_field(getattr(self, "gen_geo_ph", None), self.gen_geo_var, '("United Kingdom" OR "UK" OR "England" OR "Scotland" OR "Wales")')
+        self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, '-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -yell.com -yelp.co.uk -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories -news -bbc.co.uk -theguardian.com -dailymail.co.uk -thesun.co.uk -mirror.co.uk -telegraph.co.uk -itv.com')
+        self._set_ph_field(getattr(self, "gen_intext_ph", None), self.gen_intext_var, "")
+        self._set_ph_field(getattr(self, "gen_inurl_ph", None), self.gen_inurl_var, "")
         self.gen_site_var.set("")
         self.gen_filetype_var.set("None")
         self.gen_email_dork_var.set(False)
         self.gen_phone_dork_var.set(False)
         if hasattr(self, "gen_category_combo"):
-            self.gen_category_combo.current(1)
+            self.gen_category_combo.set("♻️ Materials Recovery & Waste Facilities")
         if hasattr(self, "gen_scale_combo"):
             self.gen_scale_combo.current(1)
         if hasattr(self, "gen_geo_combo"):
@@ -6384,12 +6568,30 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
     def _reset_generalized_form(self):
         """Resets all fields in the Generalized Search Criteria tab."""
         self._updating_query = True
-        self.gen_industry_var.set("")
-        self.gen_scale_var.set("")
-        self.gen_geo_var.set("")
-        self.gen_exclude_var.set("")
-        self.gen_intext_var.set("")
-        self.gen_inurl_var.set("")
+        if hasattr(self, "gen_ind_ph"):
+            self.gen_ind_ph.show()
+        else:
+            self.gen_industry_var.set("")
+        if hasattr(self, "gen_scale_ph"):
+            self.gen_scale_ph.show()
+        else:
+            self.gen_scale_var.set("")
+        if hasattr(self, "gen_geo_ph"):
+            self.gen_geo_ph.show()
+        else:
+            self.gen_geo_var.set("")
+        if hasattr(self, "gen_ex_ph"):
+            self.gen_ex_ph.show()
+        else:
+            self.gen_exclude_var.set("")
+        if hasattr(self, "gen_intext_ph"):
+            self.gen_intext_ph.show()
+        else:
+            self.gen_intext_var.set("")
+        if hasattr(self, "gen_inurl_ph"):
+            self.gen_inurl_ph.show()
+        else:
+            self.gen_inurl_var.set("")
         self.gen_site_var.set("")
         self.gen_filetype_var.set("None")
         self.gen_email_dork_var.set(False)
@@ -6408,7 +6610,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
 
     def _format_as_or_group(self, string_var):
         """Converts comma-separated or raw words into quoted OR group: ("Word 1" OR "Word 2")"""
-        text = string_var.get().strip()
+        text = self._clean_field_input(string_var.get())
         if not text:
             return
         if " OR " in text and text.startswith("(") and text.endswith(")"):
@@ -6438,14 +6640,14 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                 parts.append(site)
                 
             # 2. Industry / Org
-            org = self.org_var.get().strip()
+            org = self._clean_field_input(self.org_var.get())
             if org:
                 if not (org.startswith("(") and org.endswith(")")) and " OR " in org:
                     org = f"({org})"
                 parts.append(org)
                 
             # 3. Titles / Roles
-            titles = self.titles_var.get().strip()
+            titles = self._clean_field_input(self.titles_var.get())
             if titles:
                 if not (titles.startswith("(") and titles.endswith(")")) and " OR " in titles:
                     titles = f"({titles})"
@@ -6460,7 +6662,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             if self.email_dork_var.get():
                 parts.append('("@gmail.com" OR "@yahoo.com" OR "@outlook.com" OR "@hotmail.com" OR "email me at")')
                 
-            custom_dom = self.custom_email_domain_var.get().strip()
+            custom_dom = self._clean_field_input(self.custom_email_domain_var.get())
             if custom_dom:
                 if not custom_dom.startswith("@") and "." in custom_dom:
                     custom_dom = f"@{custom_dom}"
@@ -6476,42 +6678,42 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                 parts.append(ft)
                 
             # 8. Exclusions
-            ex = self.exclude_var.get().strip()
+            ex = self._clean_field_input(self.exclude_var.get())
             if ex:
                 parts.append(ex)
                 
         else:
             # Generalized Criteria Mode (Tab 2)
             # Group 1: Facility / Industry / Sector Terms
-            ind = self.gen_industry_var.get().strip()
+            ind = self._clean_field_input(self.gen_industry_var.get())
             if ind:
                 if not (ind.startswith("(") and ind.endswith(")")) and " OR " in ind:
                     ind = f"({ind})"
                 parts.append(ind)
                 
             # Group 2: Operational Scale / Multi-Site Scope
-            scale = self.gen_scale_var.get().strip()
+            scale = self._clean_field_input(self.gen_scale_var.get())
             if scale:
                 if not (scale.startswith("(") and scale.endswith(")")) and " OR " in scale:
                     scale = f"({scale})"
                 parts.append(scale)
                 
             # Group 3: Geographic / Regional Scope
-            geo = self.gen_geo_var.get().strip()
+            geo = self._clean_field_input(self.gen_geo_var.get())
             if geo and "(Worldwide" not in geo:
                 if not (geo.startswith("(") and geo.endswith(")")) and " OR " in geo:
                     geo = f"({geo})"
                 parts.append(geo)
                 
             # Optional intext
-            intext = self.gen_intext_var.get().strip()
+            intext = self._clean_field_input(self.gen_intext_var.get())
             if intext:
                 if not intext.startswith("intext:"):
                     intext = f'intext:"{intext.strip(chr(34))}"'
                 parts.append(intext)
                 
             # Optional inurl
-            inurl = self.gen_inurl_var.get().strip()
+            inurl = self._clean_field_input(self.gen_inurl_var.get())
             if inurl:
                 if not inurl.startswith("inurl:"):
                     inurl = f'inurl:{inurl}'
@@ -6536,7 +6738,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                 parts.append(ft)
                 
             # Exclusions
-            ex = self.gen_exclude_var.get().strip()
+            ex = self._clean_field_input(self.gen_exclude_var.get())
             if ex:
                 parts.append(ex)
                 
@@ -6555,10 +6757,33 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
 
     def _on_preset_selected(self, event=None):
         combo_val = self.preset_combo.get()
-        if "TARGETED" in combo_val or "GENERALIZED" in combo_val or "ENVIRONMENTAL" in combo_val or "FIRE & SMOKE" in combo_val:
+        if "TARGETED" in combo_val or "GENERALIZED" in combo_val or "ENVIRONMENTAL" in combo_val or "FIRE & SMOKE" in combo_val or "TOURISM" in combo_val:
             return
         if "Clean / Blank" in combo_val:
             self._reset_builder()
+        # Tourism, Hospitality & Travel Sector Presets
+        elif "Tourism: All-in-One" in combo_val:
+            self._load_preset("gen_tourism_all")
+        elif "Hotels & Luxury Resorts" in combo_val:
+            self._load_preset("gen_hotels_resorts")
+        elif "Restorants & Dining" in combo_val or "Restaurants & Dining" in combo_val:
+            self._load_preset("gen_restaurants")
+        elif "Tour Operators & Excursions" in combo_val:
+            self._load_preset("gen_tour_operators")
+        elif "Airport Transfers & Passenger" in combo_val:
+            self._load_preset("gen_transfers")
+        elif "Holiday Agencies & Travel" in combo_val:
+            self._load_preset("gen_holiday_agencies")
+        elif "Tourism & Hospitality Leadership" in combo_val:
+            self._load_preset("tourism_hospitality_leaders")
+        elif "Hotel & Resort Directors" in combo_val:
+            self._load_preset("hotel_resort_directors")
+        elif "Tour Operators & Travel Management" in combo_val:
+            self._load_preset("tour_operators_management")
+        elif "Holiday & Travel Agency Execs" in combo_val:
+            self._load_preset("holiday_agencies_execs")
+        elif "Airport Transfers & Transport Execs" in combo_val:
+            self._load_preset("transfer_transport_execs")
         # High Fire & Smoke Hazard Generalized Multi-Site Industries
         elif "Materials Recovery" in combo_val:
             self._load_preset("gen_waste")
@@ -6657,23 +6882,23 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             self.criteria_notebook.select(self.subtab_targeted)
             self.active_criteria_mode = "targeted"
             self.site_preset_var.set(p_data.get("site", ""))
-            self.org_var.set(p_data.get("org", ""))
-            self.titles_var.set(p_data.get("titles", ""))
+            self._set_ph_field(getattr(self, "org_ph", None), self.org_var, p_data.get("org", ""))
+            self._set_ph_field(getattr(self, "titles_ph", None), self.titles_var, p_data.get("titles", ""))
             self.location_var.set(p_data.get("location", ""))
             self.email_dork_var.set(bool(p_data.get("email_dork", False)))
             self.phone_dork_var.set(bool(p_data.get("phone_dork", False)))
-            self.custom_email_domain_var.set(p_data.get("custom_email_domain", ""))
-            self.exclude_var.set(p_data.get("exclude", ""))
+            self._set_ph_field(getattr(self, "custom_dom_ph", None), self.custom_email_domain_var, p_data.get("custom_email_domain", ""))
+            self._set_ph_field(getattr(self, "exclude_ph", None), self.exclude_var, p_data.get("exclude", ""))
             self.filetype_var.set(p_data.get("filetype", "None"))
         elif mode == "generalized":
             self.criteria_notebook.select(self.subtab_generalized)
             self.active_criteria_mode = "generalized"
-            self.gen_industry_var.set(p_data.get("industry", ""))
-            self.gen_scale_var.set(p_data.get("scale", ""))
-            self.gen_geo_var.set(p_data.get("geo", ""))
-            self.gen_exclude_var.set(p_data.get("exclude", ""))
-            self.gen_intext_var.set(p_data.get("intext", ""))
-            self.gen_inurl_var.set(p_data.get("inurl", ""))
+            self._set_ph_field(getattr(self, "gen_ind_ph", None), self.gen_industry_var, p_data.get("industry", ""))
+            self._set_ph_field(getattr(self, "gen_scale_ph", None), self.gen_scale_var, p_data.get("scale", ""))
+            self._set_ph_field(getattr(self, "gen_geo_ph", None), self.gen_geo_var, p_data.get("geo", ""))
+            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, p_data.get("exclude", ""))
+            self._set_ph_field(getattr(self, "gen_intext_ph", None), self.gen_intext_var, p_data.get("intext", ""))
+            self._set_ph_field(getattr(self, "gen_inurl_ph", None), self.gen_inurl_var, p_data.get("inurl", ""))
             self.gen_site_var.set(p_data.get("site", ""))
             self.gen_filetype_var.set(p_data.get("filetype", "None"))
             self.gen_email_dork_var.set(bool(p_data.get("email_dork", False)))

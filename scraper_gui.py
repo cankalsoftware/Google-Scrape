@@ -304,13 +304,16 @@ NEWS_TITLE_PATTERNS = [
 ]
 
 def is_job_posting_url(url: str) -> bool:
-    """Detects whether a URL originates from a job recruitment aggregator board."""
+    """Detects whether a URL originates from a job recruitment aggregator board or career portal."""
     if not url:
         return False
     try:
         parsed = urllib.parse.urlparse(url)
         netloc = re.sub(r'^www\.', '', parsed.netloc.lower())
-        if netloc in JOB_BOARD_DOMAINS or any(netloc.endswith("." + jb) for jb in JOB_BOARD_DOMAINS):
+        netloc_parts = netloc.split('.')
+        if netloc in JOB_BOARD_DOMAINS or any(netloc.endswith("." + jb) for jb in JOB_BOARD_DOMAINS) or any(jb.split('.')[0] in netloc_parts for jb in JOB_BOARD_DOMAINS):
+            return True
+        if netloc.startswith("jobs.") or netloc.startswith("careers.") or netloc.startswith("recruitment."):
             return True
         if any(re.search(p, parsed.path, re.IGNORECASE) for p in JOB_URL_PATTERNS):
             if not any(k in parsed.path.lower() for k in ["/about", "/contact", "/facility", "/facilities", "/services", "/depot"]):
@@ -1640,6 +1643,135 @@ def merge_exclusion_strings(existing_text: str, new_exclusions: str) -> str:
     return " ".join(merged)
 
 
+EXCLUSION_DROPDOWN_VALUES = (
+    "Choose / Add Exclusion to List...",
+    "🔥 Add ALL Noise Exclusions in One Go (Social + Booking + Directories + Jobs + News + Public Sector)",
+    "🚫 Exclude Social Media (Instagram, Facebook, TikTok, X, YouTube, Pinterest, LinkedIn)",
+    "🏖️ Exclude OTA & Travel Booking Portals (TripAdvisor, Booking, Expedia, Airbnb, etc.)",
+    "🛡️ Exclude Web Directories & Aggregators (Yell, Yelp, 192, Thomson, Scoot, FreeIndex)",
+    "💼 Exclude Job Boards & Recruitment (Indeed, TotalJobs, Reed, CV-Library, Vacancies)",
+    "📰 Exclude News, Media & Press (BBC, Guardian, Daily Mail, Sun, Telegraph, Reuters)",
+    "🏛️ Exclude Public Sector / Council Tips (.gov.uk, .nhs.uk, Council, Civic, HWRC)",
+    "📚 Exclude Encyclopedias & Forums (Wikipedia, Reddit, Quora, Forums)",
+    "🗑️ (Clear All Exclusions)"
+)
+
+
+def get_standard_exclusion_tokens(val: str) -> str:
+    """Returns negative exclusion tokens for standard categories."""
+    if not val:
+        return ""
+    if "Add ALL" in val or "ALL Noise" in val:
+        return "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -pinterest.com -linkedin.com -tripadvisor.com -booking.com -expedia.com -hotels.com -airbnb.com -trivago.com -kayak.com -skyscanner.net -viator.com -yell.com -yelp.co.uk -192.com -thomsonlocal.com -directory -directories -jobs -careers -recruiting -recruiter -indeed.com -totaljobs.com -reed.co.uk -news -bbc.co.uk -theguardian.com -dailymail.co.uk -council -civic -tip -.gov.uk -wikipedia.org -reddit.com"
+    elif "Social Media" in val or "Instagram" in val:
+        return "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -pinterest.com -linkedin.com"
+    elif "OTA" in val or "Booking" in val or "TripAdvisor" in val:
+        return "-tripadvisor.com -booking.com -expedia.com -hotels.com -airbnb.com -trivago.com -kayak.com -skyscanner.net -viator.com -getyourguide.com"
+    elif "Directories" in val or "Yell" in val:
+        return "-yell.com -yelp.co.uk -yelp.com -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories"
+    elif "Job" in val or "Recruitment" in val:
+        return "-jobs -careers -recruiting -recruiter -vacancies -indeed.com -totaljobs.com -reed.co.uk -cv-library.co.uk -glassdoor.com -hiring -intern"
+    elif "News" in val or "Media" in val:
+        return "-news -bbc.co.uk -theguardian.com -dailymail.co.uk -thesun.co.uk -mirror.co.uk -telegraph.co.uk -itv.com -reuters.com -bloomberg.com -article"
+    elif "Public Sector" in val or "Council" in val or ".gov.uk" in val:
+        return "-council -civic -household -tip -hwrc -.gov.uk -.nhs.uk -police.uk"
+    elif "Encyclopedias" in val or "Wikipedia" in val or "Forums" in val:
+        return "-wikipedia.org -reddit.com -quora.com -forum -discussion"
+    return ""
+
+
+def format_as_or_tokens(text: str) -> str:
+    """Converts comma-separated or raw words into a quoted OR group: (\"Word 1\" OR \"Word 2\")."""
+    if not text:
+        return ""
+    clean = text.strip()
+    if clean.startswith("e.g.") or clean.startswith("(e.g."):
+        return ""
+    if clean.startswith("(") and clean.endswith(")"):
+        inner = clean[1:-1].strip()
+        if re.fullmatch(r'("[^"]+"\s+OR\s+)+"[^"]+"', inner, re.IGNORECASE) or re.fullmatch(r'"[^"]+"', inner):
+            return clean
+        clean = inner
+
+    lines = [ln.strip() for ln in clean.splitlines() if ln.strip()]
+    raw_items = []
+    for ln in lines:
+        if "," in ln:
+            raw_items.extend([p.strip() for p in ln.split(",") if p.strip()])
+        elif re.search(r'\s+(?:OR|or)\s+', ln):
+            raw_items.extend([p.strip() for p in re.split(r'\s+(?:OR|or)\s+', ln) if p.strip()])
+        else:
+            quoted_matches = re.findall(r'"([^"]+)"|\'([^\']+)\'', ln)
+            if quoted_matches and len(quoted_matches) > 1:
+                for q1, q2 in quoted_matches:
+                    q = q1 or q2
+                    if q.strip():
+                        raw_items.append(q.strip())
+            else:
+                raw_items.append(ln.strip())
+
+    items = []
+    for item in raw_items:
+        item_clean = item.strip().strip('"\'').strip()
+        if item_clean and item_clean.upper() != "OR":
+            items.append(item_clean)
+
+    if not items:
+        return ""
+    return "(" + " OR ".join(f'"{item}"' for item in items) + ")"
+
+
+def should_exclude_result(url: str, title: str = "", snippet: str = "", exclusions: str = "") -> bool:
+    """
+    Checks whether a search result card matches active negative exclusion rules.
+    Inspects words in the domain (including subdomains like uk.indeed.com), URL path,
+    title, and snippet against negative exclusion tokens (e.g. -indeed, -careers, -tripadvisor).
+    """
+    if not exclusions or not exclusions.strip():
+        return False
+        
+    url_lower = (url or "").lower()
+    parsed = urllib.parse.urlparse(url_lower)
+    netloc = parsed.netloc.lower()
+    clean_netloc = re.sub(r'^www\.', '', netloc)
+    path = parsed.path.lower()
+    
+    domain_parts = [p for p in re.split(r'[\.\-_]', clean_netloc) if p]
+    title_lower = (title or "").lower()
+    snippet_lower = (snippet or "").lower()
+
+    tokens = [t.strip().lstrip('-').lower() for t in exclusions.split() if t.strip().startswith('-')]
+    
+    for tok in tokens:
+        if not tok:
+            continue
+            
+        clean_tok = re.sub(r'^(?:site|inurl|intext|intitle):\s*', '', tok).strip()
+        if not clean_tok:
+            continue
+            
+        if "." in clean_tok:
+            tok_root = clean_tok.split('.')[0]
+            if clean_tok in clean_netloc or (len(tok_root) >= 3 and tok_root in domain_parts):
+                return True
+            if clean_tok in url_lower or (len(tok_root) >= 3 and tok_root in url_lower):
+                return True
+        else:
+            if clean_tok in domain_parts or clean_tok in clean_netloc:
+                return True
+                
+            tok_stem = clean_tok.rstrip('s') if len(clean_tok) > 4 else clean_tok
+            if re.search(r'[/_\-]' + re.escape(tok_stem) + r'(?:s)?(?:[/_\-.]|$)', path):
+                return True
+                
+            if len(clean_tok) >= 4 and clean_tok in ["career", "careers", "job", "jobs", "recruiting", "recruiter", "hiring", "vacancies", "vacancy"]:
+                if re.search(r'\b' + re.escape(tok_stem) + r'(?:s|ing)?\b', title_lower):
+                    return True
+
+    return False
+
+
+
 class AutoExpandingTextBox(ttk.Frame):
     """
     A smart, word-wrapped entry box (built on tk.Text) that dynamically expands
@@ -2742,7 +2874,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.org_ph = self.org_box
         ToolTip(self.org_box.text, "Enter comma-separated or quoted phrases. Click '+ Quotes/OR' to auto-format.")
         
-        btn_org_add = ttk.Button(r2, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.org_var))
+        btn_org_add = ttk.Button(r2, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(getattr(self, "org_box", self.org_var)))
         btn_org_add.pack(side=tk.RIGHT)
         ToolTip(btn_org_add, "Converts comma-separated words into quoted OR group: (\"Word 1\" OR \"Word 2\").")
         
@@ -2759,7 +2891,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.titles_ph = self.titles_box
         ToolTip(self.titles_box.text, "Target job titles or role variations.")
         
-        btn_title_add = ttk.Button(r3, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.titles_var))
+        btn_title_add = ttk.Button(r3, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(getattr(self, "titles_box", self.titles_var)))
         btn_title_add.pack(side=tk.RIGHT)
         ToolTip(btn_title_add, "Converts comma-separated titles into quoted OR group.")
         
@@ -2826,34 +2958,18 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.exclude_ph = self.exclude_box
         ToolTip(self.exclude_box.text, "Words prefixed with '-' will be excluded from search results.")
         
-        self.targeted_exclude_combo = ttk.Combobox(r6, values=[
-            "Choose Exclusion / + Add More...",
-            "🚫 Exclude Social Media (Instagram, Facebook, TikTok, X, YouTube)",
-            "💼 Exclude Job & Recruitment Boards (Indeed, TotalJobs, Reed)",
-            "🛡️ Exclude Directories (Yell, Yelp, 192, Thomson)",
-            "📰 Exclude News & Media (BBC, Guardian, Daily Mail)",
-            "🏛️ Exclude Public Sector / Government (.gov.uk, Councils)",
-            "🛡️ Exclude All Noise (Social + Jobs + Directories + News)",
-            "(Clear Exclusions)"
-        ], state="readonly", width=26)
+        self.targeted_exclude_combo = ttk.Combobox(r6, values=EXCLUSION_DROPDOWN_VALUES, state="readonly", width=34)
         self.targeted_exclude_combo.current(0)
         self.targeted_exclude_combo.pack(side=tk.LEFT, padx=(0, 4))
         self.targeted_exclude_combo.bind("<<ComboboxSelected>>", self._on_targeted_exclude_selected)
-        ToolTip(self.targeted_exclude_combo, "Select exclusion pattern to automatically append to exclusions.")
+        ToolTip(self.targeted_exclude_combo, "Select any category to add exclusions to search filter. Multiple categories can be chained sequentially.")
         
-        btn_add_targeted_ex = ttk.Button(r6, text="+ Add", style="Accent.TButton", command=self._add_targeted_exclude_selected)
-        btn_add_targeted_ex.pack(side=tk.LEFT, padx=(0, 4))
-        ToolTip(btn_add_targeted_ex, "Appends the selected exclusion pattern to your exclusions.")
-        
-        btn_multi_targeted_ex = ttk.Button(r6, text="📋 Multi-Select...", style="Secondary.TButton", command=lambda: self._open_multi_exclusion_dialog(self.exclude_ph, self.exclude_var))
-        btn_multi_targeted_ex.pack(side=tk.LEFT, padx=(0, 4))
-        ToolTip(btn_multi_targeted_ex, "Opens checklist to select multiple negative exclusion categories at once.")
-        
-        btn_clear_targeted_ex = ttk.Button(r6, text="Clear", style="Secondary.TButton", command=lambda: (self.exclude_ph.set_real_value(""), self._rebuild_query()))
+        btn_clear_targeted_ex = ttk.Button(r6, text="Clear Exclude", style="Secondary.TButton", command=self._clear_targeted_exclusions)
         btn_clear_targeted_ex.pack(side=tk.LEFT, padx=(0, 8))
         ToolTip(btn_clear_targeted_ex, "Clears negative exclusion filters.")
         
         hl_filetype = self._create_help_label(r6, "Filetype:", "Filters for specific file formats like PDF resumes or docs.", width=8)
+        hl_filetype.pack(side=tk.LEFT)
         hl_filetype.pack(side=tk.LEFT)
         
         self.filetype_var = tk.StringVar(value="None")
@@ -2944,7 +3060,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.gen_category_combo.bind("<<ComboboxSelected>>", self._on_gen_category_selected)
         ToolTip(self.gen_category_combo, "Select pre-built tourism, hospitality, facility, or industry keyword groups.")
         
-        btn_ind_add = ttk.Button(r1, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.gen_industry_var))
+        btn_ind_add = ttk.Button(r1, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(getattr(self, "gen_ind_box", self.gen_industry_var)))
         btn_ind_add.pack(side=tk.RIGHT)
         ToolTip(btn_ind_add, "Converts comma-separated words into quoted OR group.")
 
@@ -2973,7 +3089,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.gen_scale_combo.bind("<<ComboboxSelected>>", self._on_gen_scale_selected)
         ToolTip(self.gen_scale_combo, "Select pre-built operational footprint or scale filters.")
         
-        btn_scale_add = ttk.Button(r2, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.gen_scale_var))
+        btn_scale_add = ttk.Button(r2, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(getattr(self, "gen_scale_box", self.gen_scale_var)))
         btn_scale_add.pack(side=tk.RIGHT)
         ToolTip(btn_scale_add, "Converts comma-separated words into quoted OR group.")
 
@@ -3004,7 +3120,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.gen_geo_combo.bind("<<ComboboxSelected>>", self._on_gen_geo_selected)
         ToolTip(self.gen_geo_combo, "Select geographic and regional boundary filters.")
         
-        btn_geo_add = ttk.Button(r3, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.gen_geo_var))
+        btn_geo_add = ttk.Button(r3, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(getattr(self, "gen_geo_box", self.gen_geo_var)))
         btn_geo_add.pack(side=tk.RIGHT)
         ToolTip(btn_geo_add, "Converts comma-separated words into quoted OR group.")
 
@@ -3018,34 +3134,16 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.gen_ex_box = AutoExpandingTextBox(r4, placeholder='e.g. -jobs -careers -directory -tripadvisor.com -booking.com', string_var=self.gen_exclude_var, on_change=self._rebuild_query)
         self.gen_ex_box.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
         self.gen_ex_ph = self.gen_ex_box
+        self.gen_exclude_ph = self.gen_ex_box
         ToolTip(self.gen_ex_box.text, 'Enter negative exclusion terms e.g. -jobs -careers -directory -tripadvisor.com -booking.com')
         
-        self.gen_exclude_combo = ttk.Combobox(r4, values=[
-            "Choose Exclusion / + Add More...",
-            "🚫 Exclude Social Media (Instagram, Facebook, TikTok, X, YouTube)",
-            "🏖️ Exclude OTA Booking Portals (TripAdvisor, Booking, Expedia, Airbnb, etc.)",
-            "🛡️ Exclude Directories (Yell, Yelp, 192, Thomson, etc.)",
-            "💼 Exclude Job & Recruitment Boards (Indeed, TotalJobs, Reed, etc.)",
-            "📰 Exclude News, Media & Press Outlets (BBC, Guardian, etc.)",
-            "🏛️ Exclude Council Tips & .gov.uk",
-            "🛡️ Exclude Social Media + Directories + Jobs (Pure Commercial Sites)",
-            "🛡️ Exclude All Noise (Social + Booking + Directories + News + Jobs)",
-            "(Clear Exclusions)"
-        ], state="readonly", width=34)
+        self.gen_exclude_combo = ttk.Combobox(r4, values=EXCLUSION_DROPDOWN_VALUES, state="readonly", width=34)
         self.gen_exclude_combo.current(0)
         self.gen_exclude_combo.pack(side=tk.LEFT, padx=(0, 4))
         self.gen_exclude_combo.bind("<<ComboboxSelected>>", self._on_gen_exclude_selected)
-        ToolTip(self.gen_exclude_combo, "Select pre-configured negative exclusion cleaners.")
+        ToolTip(self.gen_exclude_combo, "Select any category to add exclusions to search filter. Multiple categories can be chained sequentially.")
         
-        btn_add_gen_ex = ttk.Button(r4, text="+ Add Exclude", style="Accent.TButton", command=self._add_gen_exclude_selected)
-        btn_add_gen_ex.pack(side=tk.LEFT, padx=(0, 4))
-        ToolTip(btn_add_gen_ex, "Appends the selected exclusion pattern to your exclusions without removing existing ones.")
-        
-        btn_multi_gen_ex = ttk.Button(r4, text="📋 Multi-Select...", style="Secondary.TButton", command=lambda: self._open_multi_exclusion_dialog(self.gen_ex_ph, self.gen_exclude_var))
-        btn_multi_gen_ex.pack(side=tk.LEFT, padx=(0, 4))
-        ToolTip(btn_multi_gen_ex, "Opens checklist to select multiple negative exclusion categories at once.")
-        
-        btn_clear_ex = ttk.Button(r4, text="Clear Exclude", style="Secondary.TButton", command=lambda: (self.gen_exclude_ph.set_real_value(""), self._rebuild_query()))
+        btn_clear_ex = ttk.Button(r4, text="Clear Exclude", style="Secondary.TButton", command=self._clear_gen_exclusions)
         btn_clear_ex.pack(side=tk.RIGHT)
         ToolTip(btn_clear_ex, "Clears negative exclusion filters.")
 
@@ -3156,7 +3254,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.civil_sector_combo.bind("<<ComboboxSelected>>", self._on_civil_sector_selected)
         ToolTip(self.civil_sector_combo, "Select pre-built civil service or utility authority keyword groups.")
         
-        btn_sec_add = ttk.Button(r1, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.civil_sector_var))
+        btn_sec_add = ttk.Button(r1, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(getattr(self, "civil_sec_box", self.civil_sector_var)))
         btn_sec_add.pack(side=tk.RIGHT)
         ToolTip(btn_sec_add, "Converts comma-separated words into quoted OR group.")
 
@@ -3191,7 +3289,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.civil_dept_combo.bind("<<ComboboxSelected>>", self._on_civil_dept_selected)
         ToolTip(self.civil_dept_combo, "Select pre-built cross-sector department keyword groups.")
         
-        btn_dept_add = ttk.Button(r2, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.civil_dept_var))
+        btn_dept_add = ttk.Button(r2, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(getattr(self, "civil_dept_box", self.civil_dept_var)))
         btn_dept_add.pack(side=tk.RIGHT)
         ToolTip(btn_dept_add, "Converts comma-separated words into quoted OR group.")
 
@@ -3221,7 +3319,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.civil_contact_combo.bind("<<ComboboxSelected>>", self._on_civil_contact_selected)
         ToolTip(self.civil_contact_combo, "Select pre-built role and contact detail filters.")
         
-        btn_con_add = ttk.Button(r3, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.civil_contact_var))
+        btn_con_add = ttk.Button(r3, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(getattr(self, "civil_con_box", self.civil_contact_var)))
         btn_con_add.pack(side=tk.RIGHT)
         ToolTip(btn_con_add, "Converts comma-separated words into quoted OR group.")
 
@@ -3251,7 +3349,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.civil_geo_combo.bind("<<ComboboxSelected>>", self._on_civil_geo_selected)
         ToolTip(self.civil_geo_combo, "Select geographic boundary filters.")
         
-        btn_geo_add = ttk.Button(r4, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.civil_geo_var))
+        btn_geo_add = ttk.Button(r4, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(getattr(self, "civil_geo_box", self.civil_geo_var)))
         btn_geo_add.pack(side=tk.RIGHT)
         ToolTip(btn_geo_add, "Converts comma-separated words into quoted OR group.")
 
@@ -3265,31 +3363,16 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.civil_ex_box = AutoExpandingTextBox(r5, placeholder='e.g. -jobs -careers -recruiting -yell.com -wikipedia.org', string_var=self.civil_exclude_var, on_change=self._rebuild_query)
         self.civil_ex_box.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
         self.civil_ex_ph = self.civil_ex_box
+        self.civil_exclude_ph = self.civil_ex_box
         ToolTip(self.civil_ex_box.text, 'Enter negative exclusion terms e.g. -jobs -careers -recruiting -yell.com -wikipedia.org')
         
-        self.civil_exclude_combo = ttk.Combobox(r5, values=[
-            "Choose Exclusion / + Add More...",
-            "🚫 Exclude Social Media (Instagram, Facebook, TikTok, X, YouTube)",
-            "💼 Exclude Recruitment & Job Boards (Indeed, TotalJobs, Reed, etc.)",
-            "🛡️ Exclude Commercial Directories (Yell, 192, Yelp, Thomson, etc.)",
-            "📰 Exclude News, Media, Press & Wikipedia",
-            "🛡️ Exclude All Noise (Social + Jobs + Directories + News + Wiki)",
-            "(Clear Exclusions)"
-        ], state="readonly", width=34)
+        self.civil_exclude_combo = ttk.Combobox(r5, values=EXCLUSION_DROPDOWN_VALUES, state="readonly", width=34)
         self.civil_exclude_combo.current(0)
         self.civil_exclude_combo.pack(side=tk.LEFT, padx=(0, 4))
         self.civil_exclude_combo.bind("<<ComboboxSelected>>", self._on_civil_exclude_selected)
-        ToolTip(self.civil_exclude_combo, "Select pre-configured negative exclusion filters.")
+        ToolTip(self.civil_exclude_combo, "Select any category to add exclusions to search filter. Multiple categories can be chained sequentially.")
         
-        btn_add_civil_ex = ttk.Button(r5, text="+ Add Exclude", style="Accent.TButton", command=self._add_civil_exclude_selected)
-        btn_add_civil_ex.pack(side=tk.LEFT, padx=(0, 4))
-        ToolTip(btn_add_civil_ex, "Appends the selected exclusion pattern to your civil service exclusions without overwriting.")
-        
-        btn_multi_civil_ex = ttk.Button(r5, text="📋 Multi-Select...", style="Secondary.TButton", command=lambda: self._open_multi_exclusion_dialog(self.civil_ex_ph, self.civil_exclude_var))
-        btn_multi_civil_ex.pack(side=tk.LEFT, padx=(0, 4))
-        ToolTip(btn_multi_civil_ex, "Opens checklist to select multiple negative exclusion categories at once.")
-        
-        btn_clear_ex = ttk.Button(r5, text="Clear Exclude", style="Secondary.TButton", command=lambda: (self.civil_ex_ph.set_real_value(""), self._rebuild_query()))
+        btn_clear_ex = ttk.Button(r5, text="Clear Exclude", style="Secondary.TButton", command=self._clear_civil_exclusions)
         btn_clear_ex.pack(side=tk.RIGHT)
         ToolTip(btn_clear_ex, "Clears negative exclusion filters.")
 
@@ -7283,184 +7366,83 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             self._set_ph_field(getattr(self, "civil_geo_ph", None), self.civil_geo_var, "")
         self._rebuild_query()
 
-    def _open_multi_exclusion_dialog(self, target_ph, target_var):
-        """Opens a multi-selection modal dialog allowing the user to check multiple exclusion categories and insert them all at once."""
-        dlg = tk.Toplevel(self)
-        dlg.title("📋 Multi-Select Negative Exclusions")
-        dlg.geometry("640x550")
-        dlg.minsize(560, 460)
-        dlg.transient(self)
-        dlg.grab_set()
-        dlg.configure(bg="#F8FAFC")
-
-        # Header
-        hdr_frame = ttk.Frame(dlg)
-        hdr_frame.pack(fill=tk.X, padx=16, pady=(12, 6))
-        ttk.Label(hdr_frame, text="📋 Select Negative Exclusion Categories", font=("Segoe UI", 11, "bold"), foreground="#0F172A").pack(anchor="w")
-        ttk.Label(hdr_frame, text="Tick all categories you want to filter out. Selected filters will be merged into your exclusions.", font=("Segoe UI", 9), foreground="#64748B").pack(anchor="w", pady=(2, 0))
-
-        # Checkbox List in a framed container
-        list_frame = ttk.LabelFrame(dlg, text=" Available Exclusion Categories ", padding=10)
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=6)
-
-        categories = [
-            ("🚫 Social Media Platforms", "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -pinterest.com -linkedin.com",
-             "Filters out social media feeds, profiles, and video links (Instagram, Facebook, TikTok, X, YouTube, Pinterest)."),
-            ("🏖️ OTA & Travel Booking Portals", "-tripadvisor.com -booking.com -expedia.com -hotels.com -airbnb.com -trivago.com -kayak.com -skyscanner.net -viator.com -getyourguide.com",
-             "Filters out third-party booking aggregators so you reach direct hotel/restaurant/tour websites."),
-            ("🏢 Business & Web Directories", "-yell.com -yelp.co.uk -yelp.com -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories",
-             "Eliminates business directories, yellow pages, review farms, and aggregators."),
-            ("💼 Job Boards & Recruitment", "-jobs -careers -recruiting -vacancies -indeed.com -totaljobs.com -reed.co.uk -cv-library.co.uk -glassdoor.com -fish4 -recruitment",
-             "Excludes recruitment agencies and job portals to focus on operating businesses."),
-            ("📰 News, Media & Press Outlets", "-news -bbc.co.uk -theguardian.com -dailymail.co.uk -thesun.co.uk -mirror.co.uk -telegraph.co.uk -itv.com -reuters.com -bloomberg.com -article",
-             "Excludes news stories, newspaper articles, blogs, and press releases."),
-            ("🏛️ Public Sector & Council Tips", "-council -civic -household -tip -hwrc -.gov.uk -.nhs.uk -police.uk",
-             "Filters out council administration, public authority tips, and municipal waste dumps."),
-            ("📚 Encyclopedias & Forums", "-wikipedia.org -reddit.com -quora.com -forum -discussion",
-             "Excludes Wikipedia encyclopedic entries, Reddit threads, and forum discussions.")
-        ]
-
-        var_map = []
-        cur_text = target_ph.get_real_value() if target_ph else target_var.get()
-        cur_lower = cur_text.lower() if cur_text else ""
-
-        for title, tokens, desc in categories:
-            first_tok = tokens.split()[0].lower()
-            is_checked = first_tok in cur_lower
-            c_var = tk.BooleanVar(value=is_checked)
+    def _handle_exclusion_combo_select(self, combo_widget, box_widget, var_widget, tab_name=""):
+        if not combo_widget:
+            return
+        val = combo_widget.get()
+        if not val or "Choose" in val:
+            return
             
-            item_f = ttk.Frame(list_frame)
-            item_f.pack(fill=tk.X, pady=3, anchor="w")
+        if "Clear" in val:
+            if hasattr(box_widget, "set_real_value"):
+                box_widget.set_real_value("")
+            elif hasattr(var_widget, "set"):
+                var_widget.set("")
+            self.status_var.set(f"Cleared {tab_name} negative exclusions.")
+        else:
+            new_tokens = get_standard_exclusion_tokens(val)
+            if new_tokens:
+                cur = box_widget.get_real_value() if hasattr(box_widget, "get_real_value") else var_widget.get()
+                merged = merge_exclusion_strings(cur, new_tokens)
+                if hasattr(box_widget, "set_real_value"):
+                    box_widget.set_real_value(merged)
+                elif hasattr(var_widget, "set"):
+                    var_widget.set(merged)
+                if "Add ALL" in val:
+                    self.status_var.set(f"🔥 Added ALL noise exclusions to {tab_name}.")
+                else:
+                    self.status_var.set(f"✅ Added exclusions to {tab_name}.")
+                    
+        # Reset combo box back to index 0 so user can chain multiple selections
+        try:
+            combo_widget.current(0)
+        except Exception:
+            pass
             
-            cb = ttk.Checkbutton(item_f, text=title, variable=c_var)
-            cb.pack(anchor="w")
-            
-            sub_lbl = ttk.Label(item_f, text=f"   {desc}", font=("Segoe UI", 8), foreground="#475569")
-            sub_lbl.pack(anchor="w")
-            
-            tok_lbl = ttk.Label(item_f, text=f"   Tokens: {tokens[:75]}...", font=("Consolas", 7), foreground="#2563EB")
-            tok_lbl.pack(anchor="w")
-            
-            var_map.append((c_var, tokens))
+        self._rebuild_query()
 
-        # Bottom Action Bar
-        btn_bar = ttk.Frame(dlg)
-        btn_bar.pack(fill=tk.X, padx=16, pady=(8, 14))
+    def _clear_targeted_exclusions(self):
+        """Clears all negative exclusions on Tab 1 (Targeted Search)."""
+        if hasattr(self, "exclude_box"):
+            self.exclude_box.set_real_value("")
+        self.exclude_var.set("")
+        if hasattr(self, "targeted_exclude_combo"):
+            self.targeted_exclude_combo.current(0)
+        self._rebuild_query()
+        self.status_var.set("Cleared Tab 1 exclusions.")
 
-        def _select_all():
-            for v, _ in var_map:
-                v.set(True)
+    def _clear_gen_exclusions(self):
+        """Clears all negative exclusions on Tab 2 (Generalized / Tourism Search)."""
+        if hasattr(self, "gen_ex_box"):
+            self.gen_ex_box.set_real_value("")
+        elif hasattr(self, "gen_exclude_ph"):
+            self.gen_exclude_ph.set_real_value("")
+        self.gen_exclude_var.set("")
+        if hasattr(self, "gen_exclude_combo"):
+            self.gen_exclude_combo.current(0)
+        self._rebuild_query()
+        self.status_var.set("Cleared Tab 2 exclusions.")
 
-        def _deselect_all():
-            for v, _ in var_map:
-                v.set(False)
-
-        def _apply():
-            selected_tokens = []
-            for v, tokens in var_map:
-                if v.get():
-                    selected_tokens.append(tokens)
-            
-            if selected_tokens:
-                combined_new = " ".join(selected_tokens)
-                cur = target_ph.get_real_value() if target_ph else target_var.get()
-                merged = merge_exclusion_strings(cur, combined_new)
-                self._set_ph_field(target_ph, target_var, merged)
-            self._rebuild_query()
-            self.status_var.set("✅ Applied multi-selected negative exclusions.")
-            dlg.destroy()
-
-        ttk.Button(btn_bar, text="☑️ Select All", style="Secondary.TButton", command=_select_all).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_bar, text="◻️ Deselect All", style="Secondary.TButton", command=_deselect_all).pack(side=tk.LEFT, padx=(0, 6))
-        
-        ttk.Button(btn_bar, text="Cancel", style="Secondary.TButton", command=dlg.destroy).pack(side=tk.RIGHT, padx=(6, 0))
-        ttk.Button(btn_bar, text="✅ Insert Selected Exclusions", style="Primary.TButton", command=_apply).pack(side=tk.RIGHT)
-
-    def _get_targeted_exclusion_text(self, val):
-        if "Social Media" in val or "Instagram, Facebook" in val:
-            return "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -pinterest.com -linkedin.com"
-        elif "Job & Recruitment" in val:
-            return "-jobs -recruiter -recruiting -careers -hiring -intern -indeed.com -totaljobs.com"
-        elif "Directories" in val:
-            return "-yell.com -yelp.co.uk -192.com -thomsonlocal.com -directory"
-        elif "News & Media" in val:
-            return "-news -bbc.co.uk -theguardian.com -dailymail.co.uk -thesun.co.uk"
-        elif "Public Sector" in val:
-            return "-gov -council -nhs -police -.gov.uk -.nhs.uk"
-        elif "All Noise" in val:
-            return "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -jobs -recruiter -hiring -yell.com -directory -news -bbc.co.uk"
-        return ""
+    def _clear_civil_exclusions(self):
+        """Clears all negative exclusions on Tab 3 (Civil Services & Utilities Search)."""
+        if hasattr(self, "civil_ex_box"):
+            self.civil_ex_box.set_real_value("")
+        elif hasattr(self, "civil_ex_ph"):
+            self.civil_ex_ph.set_real_value("")
+        self.civil_exclude_var.set("")
+        if hasattr(self, "civil_exclude_combo"):
+            self.civil_exclude_combo.current(0)
+        self._rebuild_query()
+        self.status_var.set("Cleared Tab 3 exclusions.")
 
     def _on_targeted_exclude_selected(self, event=None):
-        val = self.targeted_exclude_combo.get()
-        if "Clear" in val:
-            self._set_ph_field(getattr(self, "exclude_ph", None), self.exclude_var, "")
-        else:
-            new_ex = self._get_targeted_exclusion_text(val)
-            if new_ex:
-                cur_ex = self.exclude_ph.get_real_value() if hasattr(self, "exclude_ph") else self.exclude_var.get()
-                merged = merge_exclusion_strings(cur_ex, new_ex)
-                self._set_ph_field(getattr(self, "exclude_ph", None), self.exclude_var, merged)
-        self._rebuild_query()
-        if hasattr(self, "targeted_exclude_combo"):
-            self.targeted_exclude_combo.current(0)
+        self._handle_exclusion_combo_select(self.targeted_exclude_combo, getattr(self, "exclude_box", self.exclude_ph), self.exclude_var, "Tab 1")
 
-    def _add_targeted_exclude_selected(self):
-        val = self.targeted_exclude_combo.get()
-        if "Choose Exclusion" in val or "Clear" in val:
-            return
-        new_ex = self._get_targeted_exclusion_text(val)
-        if not new_ex:
-            return
-        cur_ex = self.exclude_ph.get_real_value() if hasattr(self, "exclude_ph") else self.exclude_var.get()
-        merged = merge_exclusion_strings(cur_ex, new_ex)
-        self._set_ph_field(getattr(self, "exclude_ph", None), self.exclude_var, merged)
-        self._rebuild_query()
-        self.status_var.set("Added selected exclusion pattern to query.")
-        if hasattr(self, "targeted_exclude_combo"):
-            self.targeted_exclude_combo.current(0)
-
-    def _get_civil_exclusion_text(self, val):
-        if "Social Media" in val or "Instagram, Facebook" in val:
-            return "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -pinterest.com"
-        elif "Recruitment & Job" in val:
-            return "-jobs -careers -recruiting -indeed.com -totaljobs.com -reed.co.uk -jobsite.co.uk -vacancies"
-        elif "Commercial Directories" in val:
-            return "-yell.com -yelp.co.uk -192.com -thomsonlocal.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -directory"
-        elif "News, Media, Press & Wikipedia" in val:
-            return "-news -bbc.co.uk -theguardian.com -dailymail.co.uk -thesun.co.uk -wikipedia.org"
-        elif "Exclude All Noise" in val or "All Noise" in val:
-            return "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -jobs -careers -recruiting -indeed.com -totaljobs.com -yell.com -192.com -directory -news -bbc.co.uk -wikipedia.org"
-        return ""
+    def _on_gen_exclude_selected(self, event=None):
+        self._handle_exclusion_combo_select(self.gen_exclude_combo, getattr(self, "gen_ex_box", self.gen_ex_ph), self.gen_exclude_var, "Tab 2")
 
     def _on_civil_exclude_selected(self, event=None):
-        val = self.civil_exclude_combo.get()
-        if "Clear" in val or "No Exclusions" in val:
-            self._set_ph_field(getattr(self, "civil_ex_ph", None), self.civil_exclude_var, "")
-        else:
-            new_ex = self._get_civil_exclusion_text(val)
-            if new_ex:
-                cur_ex = self.civil_ex_ph.get_real_value() if hasattr(self, "civil_ex_ph") else self.civil_exclude_var.get()
-                merged = merge_exclusion_strings(cur_ex, new_ex)
-                self._set_ph_field(getattr(self, "civil_ex_ph", None), self.civil_exclude_var, merged)
-        self._rebuild_query()
-        if hasattr(self, "civil_exclude_combo"):
-            self.civil_exclude_combo.current(0)
-
-    def _add_civil_exclude_selected(self):
-        val = self.civil_exclude_combo.get()
-        if "Choose Exclusion" in val or "No Exclusions" in val or "Clear" in val:
-            return
-        new_ex = self._get_civil_exclusion_text(val)
-        if not new_ex:
-            return
-        cur_ex = self.civil_ex_ph.get_real_value() if hasattr(self, "civil_ex_ph") else self.civil_exclude_var.get()
-        merged = merge_exclusion_strings(cur_ex, new_ex)
-        self._set_ph_field(getattr(self, "civil_ex_ph", None), self.civil_exclude_var, merged)
-        self._rebuild_query()
-        self.status_var.set("Added selected civil exclusion pattern to query.")
-        if hasattr(self, "civil_exclude_combo"):
-            self.civil_exclude_combo.current(0)
+        self._handle_exclusion_combo_select(self.civil_exclude_combo, getattr(self, "civil_ex_box", self.civil_ex_ph), self.civil_exclude_var, "Tab 3")
 
     def _reset_civil_form(self):
         """Resets all fields in the Civil Services & Utilities Criteria tab."""
@@ -7593,60 +7575,6 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             self._set_ph_field(getattr(self, "gen_geo_ph", None), self.gen_geo_var, "")
         self._rebuild_query()
 
-    def _get_gen_exclusion_text(self, val):
-        if "Social Media" in val or "Instagram, Facebook" in val:
-            return "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -pinterest.com -linkedin.com"
-        elif "OTA Booking Portals" in val or "TripAdvisor, Booking" in val:
-            return "-tripadvisor.com -booking.com -expedia.com -hotels.com -airbnb.com -trivago.com -kayak.com -skyscanner.net -viator.com -getyourguide.com -jobs -careers -recruiting -news -directory"
-        elif "Directories (Yell, Yelp" in val:
-            return "-yell.com -yelp.co.uk -yelp.com -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories"
-        elif "News, Media & Press" in val:
-            return "-news -bbc.co.uk -theguardian.com -dailymail.co.uk -thesun.co.uk -mirror.co.uk -telegraph.co.uk -itv.com -reuters.com -bloomberg.com -article -story"
-        elif "Directories + News + Job" in val:
-            return "-yell.com -yelp.co.uk -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories -news -bbc.co.uk -theguardian.com -dailymail.co.uk -jobs -careers -vacancies"
-        elif "Council Tips + Directories" in val or "Council Tips" in val:
-            return "-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -yell.com -yelp.co.uk -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -directory -news -bbc.co.uk"
-        elif "Municipal/Council Tips & .gov.uk" in val:
-            return "-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -fish4"
-        elif "Job & Recruitment" in val:
-            return "-jobs -recruiting -indeed -careers -vacancies -totaljobs -reed -fish4 -cv-library"
-        elif "Public Sector" in val:
-            return "-gov -council -nhs -police -.gov.uk -.nhs.uk"
-        elif "Social Media + Directories + Jobs" in val:
-            return "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -pinterest.com -yell.com -yelp.co.uk -192.com -directory -jobs -careers -recruiting"
-        elif "All Noise" in val:
-            return "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -pinterest.com -tripadvisor.com -booking.com -expedia.com -yell.com -192.com -directory -news -bbc.co.uk -jobs -careers -recruiting"
-        return ""
-
-    def _on_gen_exclude_selected(self, event=None):
-        val = self.gen_exclude_combo.get()
-        if "Clear" in val or "No Exclusions" in val:
-            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "")
-        else:
-            new_ex = self._get_gen_exclusion_text(val)
-            if new_ex:
-                cur_ex = self.gen_ex_ph.get_real_value() if hasattr(self, "gen_ex_ph") else self.gen_exclude_var.get()
-                merged = merge_exclusion_strings(cur_ex, new_ex)
-                self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, merged)
-        self._rebuild_query()
-        if hasattr(self, "gen_exclude_combo"):
-            self.gen_exclude_combo.current(0)
-
-    def _add_gen_exclude_selected(self):
-        val = self.gen_exclude_combo.get()
-        if "Choose Exclusion" in val or "No Exclusions" in val or "Clear" in val:
-            return
-        new_ex = self._get_gen_exclusion_text(val)
-        if not new_ex:
-            return
-        cur_ex = self.gen_ex_ph.get_real_value() if hasattr(self, "gen_ex_ph") else self.gen_exclude_var.get()
-        merged = merge_exclusion_strings(cur_ex, new_ex)
-        self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, merged)
-        self._rebuild_query()
-        self.status_var.set("Added selected exclusion pattern to query.")
-        if hasattr(self, "gen_exclude_combo"):
-            self.gen_exclude_combo.current(0)
-
     def _load_waste_facility_example(self):
         """Loads the generalized waste & materials recovery facility search query."""
         self.criteria_notebook.select(self.subtab_generalized)
@@ -7717,23 +7645,36 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self._updating_query = False
         self.status_var.set("Generalized search criteria cleared.")
 
-    def _format_as_or_group(self, string_var):
-        """Converts comma-separated or raw words into quoted OR group: ("Word 1" OR "Word 2")"""
-        text = self._clean_field_input(string_var.get())
-        if not text:
-            return
-        if " OR " in text and text.startswith("(") and text.endswith(")"):
+    def _format_as_or_group(self, target):
+        """Converts comma-separated or raw words in an entry box into a quoted OR group: (\"Word 1\" OR \"Word 2\")."""
+        raw = ""
+        if hasattr(target, "get_real_value"):
+            raw = target.get_real_value()
+        elif hasattr(target, "text"):
+            raw = target.text.get("1.0", "end-1c").strip()
+        elif hasattr(target, "get"):
+            raw = target.get().strip()
+        else:
+            raw = str(target).strip()
+            
+        raw = self._clean_field_input(raw)
+        if not raw or raw.startswith("e.g.") or raw.startswith("(e.g."):
             return
             
-        items = [i.strip().strip('"\'') for i in text.split(",") if i.strip()]
-        if not items:
-            items = [text.strip('"\'')]
+        formatted = format_as_or_tokens(raw)
+        if not formatted:
+            return
             
-        formatted = " OR ".join([f'"{item}"' for item in items])
-        if len(items) > 1 or (len(items) == 1 and not items[0].startswith('"')):
-            formatted = f'({formatted})'
-        string_var.set(formatted)
+        if hasattr(target, "set_real_value"):
+            target.set_real_value(formatted)
+        elif hasattr(target, "set"):
+            target.set(formatted)
+        elif hasattr(target, "delete") and hasattr(target, "insert"):
+            target.delete("1.0", tk.END)
+            target.insert("1.0", formatted)
+            
         self._rebuild_query()
+        self.status_var.set(f"Formatted as quoted OR group: {formatted}")
 
     def _rebuild_query(self):
         """Assembles all form fields from the active criteria tab into a unified search query."""
@@ -8384,10 +8325,28 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
 
         # Process and normalize extracted items
         normalized_leads = []
+        active_exclusions = ""
+        mode = getattr(self, "active_criteria_mode", "targeted")
+        if mode == "targeted" and hasattr(self, "exclude_ph"):
+            active_exclusions = self.exclude_ph.get_real_value() or self.exclude_var.get()
+        elif mode == "generalized" and hasattr(self, "gen_ex_ph"):
+            active_exclusions = self.gen_ex_ph.get_real_value() or self.gen_exclude_var.get()
+        elif mode == "civil" and hasattr(self, "civil_ex_ph"):
+            active_exclusions = self.civil_ex_ph.get_real_value() or self.civil_exclude_var.get()
+            
+        if not active_exclusions and hasattr(self, "assembled_query_var"):
+            q_tokens = [t for t in self.assembled_query_var.get().split() if t.startswith('-')]
+            if q_tokens:
+                active_exclusions = " ".join(q_tokens)
+                
         for item in parsed_items:
             raw_title = item["title"]
             href = item["href"]
             snippet = item["snippet"]
+            
+            # Check active negative exclusions against domain words, subdomains (e.g. uk.indeed.com, careers.*), URL path, and title
+            if active_exclusions and should_exclude_result(href, raw_title, snippet, active_exclusions):
+                continue
             
             # Check if this lead originates from a job recruitment aggregator board
             if getattr(self, "exclude_job_boards_var", None) and self.exclude_job_boards_var.get():

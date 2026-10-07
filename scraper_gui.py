@@ -1352,13 +1352,16 @@ def sanitize_search_query(query: str) -> str:
     return q
 
 
-def make_combobox_adaptive(combo: ttk.Combobox):
+def make_combobox_adaptive(combo: ttk.Combobox, on_open_callback=None):
     """
     Dynamically expands the popdown dropdown listbox width of a ttk.Combobox so that
-    long options, presets, queries, and descriptions are 100% visible without text truncation.
+    long options, presets, queries, and descriptions are 100% visible without text truncation,
+    while guaranteeing the popdown remains strictly clamped within physical screen boundaries.
     """
     def _adjust(event=None):
         try:
+            if callable(on_open_callback):
+                on_open_callback()
             vals = combo['values']
             if not vals:
                 return
@@ -1643,40 +1646,146 @@ def merge_exclusion_strings(existing_text: str, new_exclusions: str) -> str:
     return " ".join(merged)
 
 
-EXCLUSION_DROPDOWN_VALUES = (
-    "Choose / Add Exclusion to List...",
-    "🔥 Add ALL Noise Exclusions in One Go (Social + Booking + Directories + Jobs + News + Public Sector)",
-    "🚫 Exclude Social Media (Instagram, Facebook, TikTok, X, YouTube, Pinterest, LinkedIn)",
-    "🏖️ Exclude OTA & Travel Booking Portals (TripAdvisor, Booking, Expedia, Airbnb, etc.)",
-    "🛡️ Exclude Web Directories & Aggregators (Yell, Yelp, 192, Thomson, Scoot, FreeIndex)",
-    "💼 Exclude Job Boards & Recruitment (Indeed, TotalJobs, Reed, CV-Library, Vacancies)",
-    "📰 Exclude News, Media & Press (BBC, Guardian, Daily Mail, Sun, Telegraph, Reuters)",
-    "🏛️ Exclude Public Sector / Council Tips (.gov.uk, .nhs.uk, Council, Civic, HWRC)",
-    "📚 Exclude Encyclopedias & Forums (Wikipedia, Reddit, Quora, Forums)",
-    "🗑️ (Clear All Exclusions)"
-)
+EXCLUSION_BASE_CATEGORIES = [
+    {
+        "id": "all",
+        "icon": "🔥",
+        "name": "Add ALL Noise Exclusions in One Go (Social + Booking + Directories + Jobs + News + Public Sector)",
+        "active_name": "ALL Noise Exclusions (Social + Booking + Directories + Jobs + News + Public Sector)",
+        "tokens": "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -pinterest.com -linkedin.com -tripadvisor.com -booking.com -expedia.com -hotels.com -airbnb.com -trivago.com -kayak.com -skyscanner.net -viator.com -yell.com -yelp.co.uk -192.com -thomsonlocal.com -directory -directories -jobs -careers -recruiting -recruiter -indeed.com -totaljobs.com -reed.co.uk -news -bbc.co.uk -theguardian.com -dailymail.co.uk -council -civic -tip -.gov.uk -wikipedia.org -reddit.com",
+        "key_tokens": ["-facebook.com", "-instagram.com", "-tripadvisor.com", "-yell.com", "-jobs", "-news", "-council", "-wikipedia.org"]
+    },
+    {
+        "id": "social",
+        "icon": "🚫",
+        "name": "Exclude Social Media (Instagram, Facebook, TikTok, X, YouTube, Pinterest, LinkedIn)",
+        "active_name": "Social Media (Instagram, Facebook, TikTok, X, YouTube, Pinterest, LinkedIn)",
+        "tokens": "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -pinterest.com -linkedin.com",
+        "key_tokens": ["-facebook.com", "-instagram.com", "-tiktok.com", "-twitter.com", "-x.com", "-youtube.com", "-pinterest.com", "-linkedin.com"]
+    },
+    {
+        "id": "ota",
+        "icon": "🏖️",
+        "name": "Exclude OTA & Travel Booking Portals (TripAdvisor, Booking, Expedia, Airbnb, etc.)",
+        "active_name": "OTA & Travel Booking Portals (TripAdvisor, Booking, Expedia, Airbnb, etc.)",
+        "tokens": "-tripadvisor.com -booking.com -expedia.com -hotels.com -airbnb.com -trivago.com -kayak.com -skyscanner.net -viator.com -getyourguide.com",
+        "key_tokens": ["-tripadvisor.com", "-booking.com", "-expedia.com", "-hotels.com", "-airbnb.com", "-trivago.com", "-kayak.com", "-skyscanner.net", "-viator.com"]
+    },
+    {
+        "id": "directories",
+        "icon": "🛡️",
+        "name": "Exclude Web Directories & Aggregators (Yell, Yelp, 192, Thomson, Scoot, FreeIndex)",
+        "active_name": "Web Directories & Aggregators (Yell, Yelp, 192, Thomson, Scoot, FreeIndex)",
+        "tokens": "-yell.com -yelp.co.uk -yelp.com -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories",
+        "key_tokens": ["-yell.com", "-yelp.co.uk", "-192.com", "-thomsonlocal.com", "-directory", "-directories"]
+    },
+    {
+        "id": "jobs",
+        "icon": "💼",
+        "name": "Exclude Job Boards & Recruitment (Indeed, TotalJobs, Reed, CV-Library, Vacancies)",
+        "active_name": "Job Boards & Recruitment (Indeed, TotalJobs, Reed, CV-Library, Vacancies)",
+        "tokens": "-jobs -careers -recruiting -recruiter -vacancies -indeed.com -totaljobs.com -reed.co.uk -cv-library.co.uk -glassdoor.com -hiring -intern",
+        "key_tokens": ["-jobs", "-careers", "-recruiting", "-indeed.com", "-totaljobs.com", "-reed.co.uk"]
+    },
+    {
+        "id": "news",
+        "icon": "📰",
+        "name": "Exclude News, Media & Press (BBC, Guardian, Daily Mail, Sun, Telegraph, Reuters)",
+        "active_name": "News, Media & Press (BBC, Guardian, Daily Mail, Sun, Telegraph, Reuters)",
+        "tokens": "-news -bbc.co.uk -theguardian.com -dailymail.co.uk -thesun.co.uk -mirror.co.uk -telegraph.co.uk -itv.com -reuters.com -bloomberg.com -article",
+        "key_tokens": ["-news", "-bbc.co.uk", "-theguardian.com", "-dailymail.co.uk", "-telegraph.co.uk", "-reuters.com"]
+    },
+    {
+        "id": "public",
+        "icon": "🏛️",
+        "name": "Exclude Public Sector / Council Tips (.gov.uk, .nhs.uk, Council, Civic, HWRC)",
+        "active_name": "Public Sector / Council Tips (.gov.uk, .nhs.uk, Council, Civic, HWRC)",
+        "tokens": "-council -civic -household -tip -hwrc -.gov.uk -.nhs.uk -police.uk",
+        "key_tokens": ["-council", "-civic", "-household", "-tip", "-hwrc", "-.gov.uk", "-.nhs.uk"]
+    },
+    {
+        "id": "forums",
+        "icon": "📚",
+        "name": "Exclude Encyclopedias & Forums (Wikipedia, Reddit, Quora, Forums)",
+        "active_name": "Encyclopedias & Forums (Wikipedia, Reddit, Quora, Forums)",
+        "tokens": "-wikipedia.org -reddit.com -quora.com -forum -discussion",
+        "key_tokens": ["-wikipedia.org", "-reddit.com", "-quora.com", "-forum"]
+    },
+]
+
+
+def is_exclusion_category_active(existing_text: str, cat: dict) -> bool:
+    """Checks if a given exclusion category is currently active in the exclusion text."""
+    if not existing_text or not existing_text.strip():
+        return False
+    cur = existing_text.strip()
+    if cur.startswith("e.g.") or cur.startswith("(e.g."):
+        return False
+    current_tokens = set(t.lower() for t in cur.split() if t.startswith('-'))
+    if not current_tokens:
+        return False
+    key_tokens = set(t.lower() for t in cat.get("key_tokens", []))
+    if not key_tokens:
+        return False
+    matched = key_tokens.intersection(current_tokens)
+    return len(matched) >= max(1, min(2, len(key_tokens) // 2))
+
+
+def remove_exclusion_tokens(existing_text: str, tokens_to_remove: str) -> str:
+    """Intelligently removes tokens belonging to a category from the negative exclusions text."""
+    if not existing_text or not existing_text.strip() or not tokens_to_remove or not tokens_to_remove.strip():
+        return existing_text.strip() if existing_text else ""
+    cur = existing_text.strip()
+    if cur.startswith("e.g.") or cur.startswith("(e.g."):
+        return ""
+    remove_set = set(t.lower() for t in tokens_to_remove.split())
+    remaining = [t for t in cur.split() if t.lower() not in remove_set]
+    return " ".join(remaining).strip()
+
+
+def get_dynamic_exclusion_dropdown_values(current_text: str = "") -> tuple:
+    """
+    Returns dynamically computed dropdown items for the exclusion combobox.
+    Options that are already active in the text show a '✅ [Active]' prefix,
+    allowing users to immediately see what is active and avoid adding duplicate options.
+    """
+    values = ["Choose / Add Exclusion to List..."]
+    for cat in EXCLUSION_BASE_CATEGORIES:
+        if is_exclusion_category_active(current_text, cat):
+            values.append(f"✅ [Active] {cat['active_name']}")
+        else:
+            values.append(f"{cat['icon']} {cat['name']}")
+    values.append("🗑️ (Clear All Exclusions)")
+    return tuple(values)
+
+
+EXCLUSION_DROPDOWN_VALUES = get_dynamic_exclusion_dropdown_values("")
 
 
 def get_standard_exclusion_tokens(val: str) -> str:
-    """Returns negative exclusion tokens for standard categories."""
+    """Returns negative exclusion tokens for standard categories (active or inactive)."""
     if not val:
         return ""
-    if "Add ALL" in val or "ALL Noise" in val:
-        return "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -pinterest.com -linkedin.com -tripadvisor.com -booking.com -expedia.com -hotels.com -airbnb.com -trivago.com -kayak.com -skyscanner.net -viator.com -yell.com -yelp.co.uk -192.com -thomsonlocal.com -directory -directories -jobs -careers -recruiting -recruiter -indeed.com -totaljobs.com -reed.co.uk -news -bbc.co.uk -theguardian.com -dailymail.co.uk -council -civic -tip -.gov.uk -wikipedia.org -reddit.com"
-    elif "Social Media" in val or "Instagram" in val:
-        return "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -pinterest.com -linkedin.com"
-    elif "OTA" in val or "Booking" in val or "TripAdvisor" in val:
-        return "-tripadvisor.com -booking.com -expedia.com -hotels.com -airbnb.com -trivago.com -kayak.com -skyscanner.net -viator.com -getyourguide.com"
-    elif "Directories" in val or "Yell" in val:
-        return "-yell.com -yelp.co.uk -yelp.com -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories"
-    elif "Job" in val or "Recruitment" in val:
-        return "-jobs -careers -recruiting -recruiter -vacancies -indeed.com -totaljobs.com -reed.co.uk -cv-library.co.uk -glassdoor.com -hiring -intern"
-    elif "News" in val or "Media" in val:
-        return "-news -bbc.co.uk -theguardian.com -dailymail.co.uk -thesun.co.uk -mirror.co.uk -telegraph.co.uk -itv.com -reuters.com -bloomberg.com -article"
-    elif "Public Sector" in val or "Council" in val or ".gov.uk" in val:
-        return "-council -civic -household -tip -hwrc -.gov.uk -.nhs.uk -police.uk"
-    elif "Encyclopedias" in val or "Wikipedia" in val or "Forums" in val:
-        return "-wikipedia.org -reddit.com -quora.com -forum -discussion"
+    val_clean = val.replace("✅ [Active]", "").strip()
+    for cat in EXCLUSION_BASE_CATEGORIES:
+        if cat["name"] in val_clean or cat["active_name"] in val_clean:
+            return cat["tokens"]
+    if "Add ALL" in val_clean or "ALL Noise" in val_clean:
+        return EXCLUSION_BASE_CATEGORIES[0]["tokens"]
+    elif "Social Media" in val_clean or "Instagram" in val_clean:
+        return EXCLUSION_BASE_CATEGORIES[1]["tokens"]
+    elif "OTA" in val_clean or "Booking" in val_clean or "TripAdvisor" in val_clean:
+        return EXCLUSION_BASE_CATEGORIES[2]["tokens"]
+    elif "Directories" in val_clean or "Yell" in val_clean:
+        return EXCLUSION_BASE_CATEGORIES[3]["tokens"]
+    elif "Job" in val_clean or "Recruitment" in val_clean:
+        return EXCLUSION_BASE_CATEGORIES[4]["tokens"]
+    elif "News" in val_clean or "Media" in val_clean:
+        return EXCLUSION_BASE_CATEGORIES[5]["tokens"]
+    elif "Public Sector" in val_clean or "Council" in val_clean or ".gov.uk" in val_clean:
+        return EXCLUSION_BASE_CATEGORIES[6]["tokens"]
+    elif "Encyclopedias" in val_clean or "Wikipedia" in val_clean or "Forums" in val_clean:
+        return EXCLUSION_BASE_CATEGORIES[7]["tokens"]
     return ""
 
 
@@ -2266,6 +2375,7 @@ class GoogleLeadScraperSuite(tk.Tk):
             self.style.theme_use("clam")
             
         # Ensure Tcl combobox popdown placement engine dynamically resizes to fit full text strings
+        # and strictly clamps within physical screen boundaries on any monitor or resolution
         try:
             self.tk.eval("""
 proc ::ttk::combobox::PlacePopdown {cb popdown} {
@@ -2273,6 +2383,8 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
     set y [winfo rooty $cb]
     set w [winfo width $cb]
     set h [winfo height $cb]
+    set screenW [winfo screenwidth $cb]
+    set screenH [winfo screenheight $cb]
     set style [$cb cget -style]
     set postoffset [ttk::style lookup $style -postoffset {} {0 0 0 0}]
     foreach var {x y w h} delta $postoffset {
@@ -2300,8 +2412,29 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         set w $reqW
     }
 
-    # Position directly below the combobox at its exact root coordinates on the current screen/monitor
+    # Clamp popdown width so it never exceeds screen width
+    if {$w > [expr {$screenW - 20}]} {
+        set w [expr {$screenW - 20}]
+    }
+
+    # Position below combobox by default
     set Y [expr {$y + $h}]
+
+    # Flip above combobox if popdown would extend below the bottom of the screen
+    if {[expr {$Y + $H}] > [expr {$screenH - 35}]} {
+        set aboveY [expr {$y - $H}]
+        if {$aboveY >= 10} {
+            set Y $aboveY
+        }
+    }
+
+    # Clamp horizontal position so dropdown never spills past the right edge of the screen
+    if {[expr {$x + $w}] > [expr {$screenW - 10}]} {
+        set x [expr {$screenW - $w - 10}]
+    }
+    if {$x < 10} {
+        set x 10
+    }
 
     wm geometry $popdown ${w}x${H}+${x}+${Y}
 }
@@ -2962,7 +3095,8 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.targeted_exclude_combo.current(0)
         self.targeted_exclude_combo.pack(side=tk.LEFT, padx=(0, 4))
         self.targeted_exclude_combo.bind("<<ComboboxSelected>>", self._on_targeted_exclude_selected)
-        ToolTip(self.targeted_exclude_combo, "Select any category to add exclusions to search filter. Multiple categories can be chained sequentially.")
+        make_combobox_adaptive(self.targeted_exclude_combo, on_open_callback=lambda: self._refresh_exclusion_combo(self.targeted_exclude_combo, getattr(self, "exclude_box", self.exclude_ph), self.exclude_var))
+        ToolTip(self.targeted_exclude_combo, "Select any category to add or remove exclusions. Active filters display with ✅ [Active].")
         
         btn_clear_targeted_ex = ttk.Button(r6, text="Clear Exclude", style="Secondary.TButton", command=self._clear_targeted_exclusions)
         btn_clear_targeted_ex.pack(side=tk.LEFT, padx=(0, 8))
@@ -3141,7 +3275,8 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.gen_exclude_combo.current(0)
         self.gen_exclude_combo.pack(side=tk.LEFT, padx=(0, 4))
         self.gen_exclude_combo.bind("<<ComboboxSelected>>", self._on_gen_exclude_selected)
-        ToolTip(self.gen_exclude_combo, "Select any category to add exclusions to search filter. Multiple categories can be chained sequentially.")
+        make_combobox_adaptive(self.gen_exclude_combo, on_open_callback=lambda: self._refresh_exclusion_combo(self.gen_exclude_combo, getattr(self, "gen_ex_box", self.gen_ex_ph), self.gen_exclude_var))
+        ToolTip(self.gen_exclude_combo, "Select any category to add or remove exclusions. Active filters display with ✅ [Active].")
         
         btn_clear_ex = ttk.Button(r4, text="Clear Exclude", style="Secondary.TButton", command=self._clear_gen_exclusions)
         btn_clear_ex.pack(side=tk.RIGHT)
@@ -3370,7 +3505,8 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.civil_exclude_combo.current(0)
         self.civil_exclude_combo.pack(side=tk.LEFT, padx=(0, 4))
         self.civil_exclude_combo.bind("<<ComboboxSelected>>", self._on_civil_exclude_selected)
-        ToolTip(self.civil_exclude_combo, "Select any category to add exclusions to search filter. Multiple categories can be chained sequentially.")
+        make_combobox_adaptive(self.civil_exclude_combo, on_open_callback=lambda: self._refresh_exclusion_combo(self.civil_exclude_combo, getattr(self, "civil_ex_box", self.civil_ex_ph), self.civil_exclude_var))
+        ToolTip(self.civil_exclude_combo, "Select any category to add or remove exclusions. Active filters display with ✅ [Active].")
         
         btn_clear_ex = ttk.Button(r5, text="Clear Exclude", style="Secondary.TButton", command=self._clear_civil_exclusions)
         btn_clear_ex.pack(side=tk.RIGHT)
@@ -3573,7 +3709,8 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         else:
             self.exclude_var.set("")
         if hasattr(self, "targeted_exclude_combo"):
-            self.targeted_exclude_combo.set("Choose Exclusion / + Add More...")
+            self.targeted_exclude_combo.configure(values=get_dynamic_exclusion_dropdown_values(""))
+            self.targeted_exclude_combo.current(0)
         self.filetype_var.set("None")
         
         # Generalized fields (Tab 2)
@@ -3612,7 +3749,8 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         if hasattr(self, "gen_geo_combo"):
             self.gen_geo_combo.set("Choose Region...")
         if hasattr(self, "gen_exclude_combo"):
-            self.gen_exclude_combo.set("Choose Exclusion Pattern...")
+            self.gen_exclude_combo.configure(values=get_dynamic_exclusion_dropdown_values(""))
+            self.gen_exclude_combo.current(0)
 
         # Civil Services fields (Tab 3)
         if hasattr(self, "civil_sector_ph"):
@@ -3656,7 +3794,8 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         if hasattr(self, "civil_geo_combo"):
             self.civil_geo_combo.set("Choose Region...")
         if hasattr(self, "civil_exclude_combo"):
-            self.civil_exclude_combo.set("Choose Exclusion Pattern...")
+            self.civil_exclude_combo.configure(values=get_dynamic_exclusion_dropdown_values(""))
+            self.civil_exclude_combo.current(0)
             
         self.assembled_query_var.set("")
         if hasattr(self, "preset_combo"):
@@ -7366,12 +7505,33 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             self._set_ph_field(getattr(self, "civil_geo_ph", None), self.civil_geo_var, "")
         self._rebuild_query()
 
+    def _refresh_exclusion_combo(self, combo_widget, box_widget, var_widget):
+        """Refreshes the combobox values to show active selection indicators (✅ [Active])."""
+        if not combo_widget:
+            return
+        cur = ""
+        if hasattr(box_widget, "get_real_value"):
+            cur = box_widget.get_real_value()
+        elif hasattr(var_widget, "get"):
+            cur = var_widget.get()
+        new_vals = get_dynamic_exclusion_dropdown_values(cur)
+        try:
+            combo_widget.configure(values=new_vals)
+        except Exception:
+            pass
+
     def _handle_exclusion_combo_select(self, combo_widget, box_widget, var_widget, tab_name=""):
         if not combo_widget:
             return
         val = combo_widget.get()
-        if not val or "Choose" in val:
+        if not val or val.startswith("Choose"):
             return
+            
+        cur = ""
+        if hasattr(box_widget, "get_real_value"):
+            cur = box_widget.get_real_value()
+        elif hasattr(var_widget, "get"):
+            cur = var_widget.get()
             
         if "Clear" in val:
             if hasattr(box_widget, "set_real_value"):
@@ -7379,10 +7539,21 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             elif hasattr(var_widget, "set"):
                 var_widget.set("")
             self.status_var.set(f"Cleared {tab_name} negative exclusions.")
+        elif "✅ [Active]" in val or "[Active]" in val:
+            # Option is already selected: clicking toggles it OFF (removes category tokens)
+            tokens = get_standard_exclusion_tokens(val)
+            if tokens:
+                updated = remove_exclusion_tokens(cur, tokens)
+                if hasattr(box_widget, "set_real_value"):
+                    box_widget.set_real_value(updated)
+                elif hasattr(var_widget, "set"):
+                    var_widget.set(updated)
+                cat_label = val.replace("✅ [Active]", "").split("(")[0].strip()
+                self.status_var.set(f"Removed active exclusions for {cat_label} from {tab_name}.")
         else:
+            # Option is not active: add/merge tokens
             new_tokens = get_standard_exclusion_tokens(val)
             if new_tokens:
-                cur = box_widget.get_real_value() if hasattr(box_widget, "get_real_value") else var_widget.get()
                 merged = merge_exclusion_strings(cur, new_tokens)
                 if hasattr(box_widget, "set_real_value"):
                     box_widget.set_real_value(merged)
@@ -7391,8 +7562,12 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                 if "Add ALL" in val:
                     self.status_var.set(f"🔥 Added ALL noise exclusions to {tab_name}.")
                 else:
-                    self.status_var.set(f"✅ Added exclusions to {tab_name}.")
+                    cat_label = val.split("(")[0].strip()
+                    self.status_var.set(f"✅ Added {cat_label} to {tab_name}.")
                     
+        # Update combo values to reflect new active state
+        self._refresh_exclusion_combo(combo_widget, box_widget, var_widget)
+        
         # Reset combo box back to index 0 so user can chain multiple selections
         try:
             combo_widget.current(0)
@@ -7407,6 +7582,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             self.exclude_box.set_real_value("")
         self.exclude_var.set("")
         if hasattr(self, "targeted_exclude_combo"):
+            self.targeted_exclude_combo.configure(values=get_dynamic_exclusion_dropdown_values(""))
             self.targeted_exclude_combo.current(0)
         self._rebuild_query()
         self.status_var.set("Cleared Tab 1 exclusions.")
@@ -7419,6 +7595,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             self.gen_exclude_ph.set_real_value("")
         self.gen_exclude_var.set("")
         if hasattr(self, "gen_exclude_combo"):
+            self.gen_exclude_combo.configure(values=get_dynamic_exclusion_dropdown_values(""))
             self.gen_exclude_combo.current(0)
         self._rebuild_query()
         self.status_var.set("Cleared Tab 2 exclusions.")
@@ -7431,6 +7608,7 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             self.civil_ex_ph.set_real_value("")
         self.civil_exclude_var.set("")
         if hasattr(self, "civil_exclude_combo"):
+            self.civil_exclude_combo.configure(values=get_dynamic_exclusion_dropdown_values(""))
             self.civil_exclude_combo.current(0)
         self._rebuild_query()
         self.status_var.set("Cleared Tab 3 exclusions.")
@@ -7488,7 +7666,8 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         if hasattr(self, "civil_geo_combo"):
             self.civil_geo_combo.set("Choose Region...")
         if hasattr(self, "civil_exclude_combo"):
-            self.civil_exclude_combo.set("Choose Exclusion Pattern...")
+            self.civil_exclude_combo.configure(values=get_dynamic_exclusion_dropdown_values(""))
+            self.civil_exclude_combo.current(0)
         self.assembled_query_var.set("")
         self._updating_query = False
         self.status_var.set("Civil services search criteria cleared.")
@@ -7640,7 +7819,8 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         if hasattr(self, "gen_geo_combo"):
             self.gen_geo_combo.set("Choose Region...")
         if hasattr(self, "gen_exclude_combo"):
-            self.gen_exclude_combo.set("Choose Exclusion Pattern...")
+            self.gen_exclude_combo.configure(values=get_dynamic_exclusion_dropdown_values(""))
+            self.gen_exclude_combo.current(0)
         self.assembled_query_var.set("")
         self._updating_query = False
         self.status_var.set("Generalized search criteria cleared.")

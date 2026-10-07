@@ -17,14 +17,18 @@ A high-performance Python & Tkinter desktop suite for precision OSINT, advanced 
   - **Tor SOCKS5 Proxy Routing**: 1-click routing through Tor (`socks5://127.0.0.1:9150` or `9050`) for anonymous queries.
   - **Configurable Delays**: Per-page scraping rate-limit prevention and custom timeouts.
 
-### 🛠️ 2. Dual-Strategy Query Builder & Search Templates
+### 🛠️ 2. Multi-Strategy Query Builder & Search Templates
 - **Sub-Tab 1: Targeted Site & Profile Search (`site:`)**:
   - Laser-targeted dork generator for platforms like LinkedIn (`site:linkedin.com/in/`), GitHub, StackOverflow, corporate domains, and government registries.
   - Multi-parameter filters: Organization/Company, Job Titles (with automatic boolean `OR` formatting), Geographic Locations, Negative Keyword Exclusions (`-`), Filetypes (`filetype:pdf`, `filetype:xlsx`), and Public Contact Dorks (hunting `@gmail`, `@outlook`, and phone numbers).
 - **Sub-Tab 2: Generalized Multi-Group Boolean Query Builder**:
-  - Constructs advanced multi-group queries across the open web to discover commercial facilities, regional hubs, corporate headquarters, and multi-site operations.
-  - Combines Industry Keywords, Operational Scale Triggers (*"multiple sites"*, *"head office"*, *"nationwide"*), Geographic Filters, and Negative Noise Exclusions (*-jobs -careers -directory -news*).
-- **Pre-Configured Dork Recipes**: Built-in 1-click templates for B2B Lead Generation, Cybersecurity OSINT, Developer Code & Error Hunting, and Public Registries.
+  - Constructs advanced multi-group queries across the open web to discover commercial facilities, tourism & hospitality chains, regional hubs, corporate headquarters, and multi-site operations.
+  - Combines Industry Keywords, Operational Scale Triggers (*"multiple locations"*, *"chain"*, *"nationwide"*), Geographic Filters, and Negative Noise Exclusions (*-tripadvisor.com -booking.com -jobs -directory -news*).
+- **Sub-Tab 3: Civil Services, Public Bodies & Utilities Query Builder**:
+  - Precision multi-group boolean builder for public sector bodies, emergency services, local councils, and critical utility networks (Police, Councils, NHS, Ambulance, Fire, Electricity, Gas, Water).
+  - Cross-sector department matching across Technology/ICT, Environmental Health, Planning & Building Control, Security & Resilience, Procurement, Estates, and Operations.
+  - Interactive **Department Matching Guide** with copyable sector queries and official domain filters (`site:*.gov.uk`, `site:*.nhs.uk`, `site:*.police.uk`).
+- **Pre-Configured Dork Recipes**: Built-in 1-click templates for Civil Services & Utilities, Tourism & Hospitality, High Fire Hazards, B2B Lead Generation, Cybersecurity OSINT, Developer Code & Error Hunting, and Public Registries.
 
 ### ⚡ 3. Automated Lead Parsing & Email Enrichment
 - **Entity Parsing**: Automatically parses raw search result snippets to extract First Name, Last Name, Full Name, Job Role, and Company / Organisation.

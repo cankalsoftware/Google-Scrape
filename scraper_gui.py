@@ -15,7 +15,8 @@ import zipfile
 import requests
 from bs4 import BeautifulSoup
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, font as tkfont
+
 
 # Try importing Selenium for reliable browser rendering & CAPTCHA bypass
 try:
@@ -505,13 +506,15 @@ def parse_lead_name(full_name: str):
     return first_name, last_name, display_name
 
 
-def resolve_organization_domain(org_text: str, headline: str = "", snippet: str = "", industry: str = "fire", custom_domain: str = "") -> str:
+def resolve_organization_domain(org_text: str, headline: str = "", snippet: str = "", industry: str = "all", custom_domain: str = "") -> str:
     """
     Resolves the official domain (.gov.uk / .org.uk / .net) for an organization.
     Multi-tier lookup: Exact -> Aliases/Acronyms -> Keyword -> Snippet extraction -> Custom Fallback.
     """
     if custom_domain and custom_domain.strip():
-        return custom_domain.strip().lower().replace("@", "")
+        c = custom_domain.strip().lower().replace("@", "")
+        if not c.startswith("e.g.") and not c.startswith("(e.g."):
+            return c
         
     # Select active lookup dictionary via data_loader
     lookup_dict = data_loader.get_domain_lookup(industry)
@@ -765,6 +768,10 @@ def api_enrich_lead(lead_dict: dict, provider: str = "builtin", api_key: str = "
                 domain = clean_netloc
         except Exception:
             pass
+    if not domain and custom_domain and custom_domain.strip():
+        c = custom_domain.strip().lower().replace("@", "")
+        if not c.startswith("e.g.") and not c.startswith("(e.g."):
+            domain = c
     if not domain:
         domain = resolve_organization_domain(org, headline, snippet, industry, custom_domain)
         
@@ -1604,6 +1611,286 @@ class TreeviewHoverToolTip:
                 pass
 
 
+def merge_exclusion_strings(existing_text: str, new_exclusions: str) -> str:
+    """
+    Intelligently merges negative exclusions without duplicate -tokens or overwriting custom additions.
+    """
+    if not new_exclusions or not new_exclusions.strip():
+        return existing_text.strip() if existing_text else ""
+    
+    clean_new = new_exclusions.strip()
+    if not existing_text or not existing_text.strip():
+        return clean_new
+        
+    clean_old = existing_text.strip()
+    if clean_old.startswith("e.g.") or clean_old.startswith("(e.g."):
+        return clean_new
+        
+    old_tokens = clean_old.split()
+    new_tokens = clean_new.split()
+    
+    seen = {t.lower(): True for t in old_tokens}
+    merged = list(old_tokens)
+    
+    for t in new_tokens:
+        if t.lower() not in seen:
+            merged.append(t)
+            seen[t.lower()] = True
+            
+    return " ".join(merged)
+
+
+class AutoExpandingTextBox(ttk.Frame):
+    """
+    A smart, word-wrapped entry box (built on tk.Text) that dynamically expands
+    vertically as text is typed, pasted, or loaded (from 1 to 3 rows).
+    When content exceeds 3 rows, it caps its height at 3 rows and introduces
+    a vertical scrollbar on the right side, ensuring the main window never overflows.
+    """
+    def __init__(
+        self,
+        parent,
+        placeholder="",
+        string_var=None,
+        on_change=None,
+        min_lines=1,
+        max_lines=3,
+        font_spec=("Segoe UI", 9),
+        width=None,
+        foreground="#0F172A",
+        **kwargs
+    ):
+        super().__init__(parent)
+        self.placeholder = placeholder
+        self.var = string_var if string_var is not None else tk.StringVar()
+        self.on_change = on_change
+        self.min_lines = min_lines
+        self.max_lines = max_lines
+        self.is_placeholder = False
+        self.placeholder_color = "#94A3B8"
+        self.normal_color = foreground
+        self._internal_update = False
+        
+        self.font = tkfont.Font(font=font_spec)
+        
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+        
+        text_kwargs = dict(
+            wrap=tk.WORD,
+            height=min_lines,
+            font=self.font,
+            relief="solid",
+            bd=1,
+            highlightthickness=1,
+            highlightcolor="#0284C7",
+            highlightbackground="#CBD5E1",
+            padx=4,
+            pady=2,
+            foreground=self.normal_color,
+            bg="#FFFFFF"
+        )
+        if width is not None:
+            text_kwargs["width"] = width
+        text_kwargs.update(kwargs)
+        
+        self.text = tk.Text(self, **text_kwargs)
+        self.text.grid(row=0, column=0, sticky="nsew")
+        
+        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.text.yview)
+        self.text.configure(yscrollcommand=self.scrollbar.set)
+        self._scrollbar_visible = False
+        
+        self.text.bind("<FocusIn>", self._on_focus_in, add="+")
+        self.text.bind("<FocusOut>", self._on_focus_out, add="+")
+        self.text.bind("<KeyRelease>", self._on_key_release, add="+")
+        self.text.bind("<Configure>", self._on_configure, add="+")
+        self.text.bind("<<Modified>>", self._on_modified, add="+")
+        
+        try:
+            self.var.trace_add("write", self._on_var_trace)
+        except Exception:
+            self.var.trace("w", self._on_var_trace)
+            
+        val = self.var.get().strip()
+        if not val or val == self.placeholder or val.startswith("e.g.") or val.startswith("(e.g."):
+            self.show_placeholder()
+        else:
+            self._set_text_raw(val, is_ph=False)
+
+    def _on_var_trace(self, *args):
+        if self._internal_update:
+            return
+        val = self.var.get()
+        if not val or val == self.placeholder or val.startswith("e.g.") or val.startswith("(e.g."):
+            self.show_placeholder()
+        else:
+            self.is_placeholder = False
+            self._set_text_raw(val, is_ph=False)
+            self._adjust_height()
+
+    def _on_focus_in(self, event=None):
+        if self.is_placeholder:
+            self.hide_placeholder()
+
+    def _on_focus_out(self, event=None):
+        val = self.get_real_value()
+        if not val:
+            self.show_placeholder()
+
+    def _on_key_release(self, event=None):
+        if self._internal_update:
+            return
+        if self.is_placeholder:
+            return
+        val = self.text.get("1.0", "end-1c")
+        self._internal_update = True
+        self.var.set(val)
+        self._internal_update = False
+        self._adjust_height()
+        if self.on_change:
+            self.on_change()
+
+    def _on_modified(self, event=None):
+        try:
+            if self.text.edit_modified():
+                if not self._internal_update and not self.is_placeholder:
+                    val = self.text.get("1.0", "end-1c")
+                    self._internal_update = True
+                    self.var.set(val)
+                    self._internal_update = False
+                    self._adjust_height()
+                    if self.on_change:
+                        self.on_change()
+                self.text.edit_modified(False)
+        except Exception:
+            pass
+
+    def _on_configure(self, event=None):
+        self._adjust_height()
+
+    def show_placeholder(self):
+        self.is_placeholder = True
+        self._set_text_raw(self.placeholder, is_ph=True)
+        self._internal_update = True
+        self.var.set("")
+        self._internal_update = False
+        self._adjust_height()
+
+    def hide_placeholder(self):
+        if self.is_placeholder:
+            self.is_placeholder = False
+            self._set_text_raw("", is_ph=False)
+            self._internal_update = True
+            self.var.set("")
+            self._internal_update = False
+            self._adjust_height()
+
+    def _set_text_raw(self, content, is_ph=False):
+        self.text.delete("1.0", tk.END)
+        self.text.insert("1.0", content)
+        if is_ph:
+            try:
+                self.text.configure(foreground=self.placeholder_color)
+            except Exception:
+                pass
+        else:
+            try:
+                self.text.configure(foreground=self.normal_color)
+            except Exception:
+                pass
+
+    def get_real_value(self):
+        if self.is_placeholder:
+            return ""
+        raw = self.text.get("1.0", "end-1c").strip()
+        if raw == self.placeholder or raw.startswith("e.g.") or raw.startswith("(e.g."):
+            return ""
+        return raw
+
+    def set_real_value(self, val):
+        val_str = str(val).strip() if val is not None else ""
+        if not val_str or val_str == self.placeholder or val_str.startswith("e.g.") or val_str.startswith("(e.g."):
+            self.show_placeholder()
+        else:
+            self.is_placeholder = False
+            self._set_text_raw(val_str, is_ph=False)
+            self._internal_update = True
+            self.var.set(val_str)
+            self._internal_update = False
+        self._adjust_height()
+
+    # Compatibility aliases
+    def show(self):
+        self.show_placeholder()
+
+    def hide(self):
+        self.hide_placeholder()
+
+    def get(self):
+        return self.get_real_value()
+
+    def _calculate_lines(self):
+        content = self.text.get("1.0", "end-1c")
+        if not content:
+            return 1
+        w_pixels = 0
+        try:
+            w_pixels = self.text.winfo_width()
+        except Exception:
+            pass
+        if w_pixels <= 20:
+            w_pixels = 450
+        avail_w = max(50, w_pixels - 20)
+        total_lines = 0
+        paragraphs = content.split("\n")
+        for p in paragraphs:
+            if not p:
+                total_lines += 1
+                continue
+            p_w = self.font.measure(p)
+            if p_w <= avail_w:
+                total_lines += 1
+            else:
+                words = p.split(" ")
+                cur_w = 0
+                cur_p_lines = 1
+                sp_w = self.font.measure(" ")
+                for w in words:
+                    ww = self.font.measure(w)
+                    if cur_w + ww > avail_w:
+                        if cur_w > 0:
+                            cur_p_lines += 1
+                            cur_w = ww + sp_w
+                        else:
+                            cur_p_lines += max(1, ww // avail_w)
+                            cur_w = 0
+                    else:
+                        cur_w += ww + sp_w
+                total_lines += cur_p_lines
+        return max(1, total_lines)
+
+    def _adjust_height(self):
+        lines = self._calculate_lines()
+        target_lines = max(self.min_lines, min(self.max_lines, lines))
+        try:
+            current_h = int(self.text.cget("height"))
+        except Exception:
+            current_h = 1
+            
+        if current_h != target_lines:
+            self.text.configure(height=target_lines)
+            
+        if lines > self.max_lines:
+            if not self._scrollbar_visible:
+                self.scrollbar.grid(row=0, column=1, sticky="ns")
+                self._scrollbar_visible = True
+        else:
+            if self._scrollbar_visible:
+                self.scrollbar.grid_remove()
+                self._scrollbar_visible = False
+
+
 class PlaceholderHelper:
     """
     Attaches responsive, guided placeholder text to an Entry or ttk.Entry widget.
@@ -1733,10 +2020,10 @@ class GoogleLeadScraperSuite(tk.Tk):
         self._updating_query = False
         self.search_history = self._load_search_history()
         
-        # Search Criteria Strategy State (targeted vs generalized)
+        # Search Criteria Strategy State (targeted vs generalized vs civil)
         self.active_criteria_mode = "targeted"
         
-        # Generalized Multi-Group Boolean Search Criteria State
+        # Generalized Multi-Group Boolean Search Criteria State (Tab 2)
         self.gen_industry_var = tk.StringVar(value="")
         self.gen_scale_var = tk.StringVar(value="")
         self.gen_geo_var = tk.StringVar(value="")
@@ -1747,6 +2034,19 @@ class GoogleLeadScraperSuite(tk.Tk):
         self.gen_site_var = tk.StringVar(value="")
         self.gen_email_dork_var = tk.BooleanVar(value=False)
         self.gen_phone_dork_var = tk.BooleanVar(value=False)
+        
+        # Civil Services & Utilities Multi-Group Search Criteria State (Tab 3)
+        self.civil_sector_var = tk.StringVar(value="")
+        self.civil_dept_var = tk.StringVar(value="")
+        self.civil_contact_var = tk.StringVar(value="")
+        self.civil_geo_var = tk.StringVar(value="")
+        self.civil_exclude_var = tk.StringVar(value="")
+        self.civil_intext_var = tk.StringVar(value="")
+        self.civil_inurl_var = tk.StringVar(value="")
+        self.civil_filetype_var = tk.StringVar(value="None")
+        self.civil_site_var = tk.StringVar(value="")
+        self.civil_email_dork_var = tk.BooleanVar(value=False)
+        self.civil_phone_dork_var = tk.BooleanVar(value=False)
         
         # Enrichment Configuration State
         self.enrich_industry_var = tk.StringVar(value="fire")
@@ -1978,6 +2278,32 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         fire_risk_menu.add_command(label="🖥️ Data Centers & Colocation Infrastructure", command=lambda: self._load_preset("gen_datacenters"))
         templates_menu.add_cascade(label="🔥 High Fire & Smoke Hazard Industries", menu=fire_risk_menu)
         
+        # Sub-Menu: 🏖️ Tourism, Hospitality & Travel Services
+        tourism_menu = tk.Menu(templates_menu, tearoff=0)
+        tourism_menu.add_command(label="🏖️ Tourism & Hospitality: All-in-One", command=lambda: self._load_preset("gen_tourism_all"))
+        tourism_menu.add_command(label="🏨 Hotels, Resorts & Luxury Accommodation", command=lambda: self._load_preset("gen_hotels_resorts"))
+        tourism_menu.add_command(label="🍽️ Restaurants, Dining & Bistros", command=lambda: self._load_preset("gen_restaurants"))
+        tourism_menu.add_command(label="🧭 Tour Operators, Excursions & Guided Travel", command=lambda: self._load_preset("gen_tour_operators"))
+        tourism_menu.add_command(label="🚐 Airport Transfers, Chauffeur & Private Shuttles", command=lambda: self._load_preset("gen_transfers"))
+        tourism_menu.add_command(label="🏖️ Holiday Agencies, Travel Agents & Booking", command=lambda: self._load_preset("gen_holiday_agencies"))
+        templates_menu.add_cascade(label="🏖️ Tourism & Hospitality Industry", menu=tourism_menu)
+
+        # Sub-Menu: 🏛️ Civil Services, Public Sector & Utilities
+        civil_menu = tk.Menu(templates_menu, tearoff=0)
+        civil_menu.add_command(label="🏛️ All Civil Services & Utilities Combined", command=lambda: self._load_preset("civil_all_combined"))
+        civil_menu.add_command(label="👮 Police Forces & Law Enforcement (Tech)", command=lambda: self._load_preset("civil_police_tech"))
+        civil_menu.add_command(label="🏛️ Local Councils: Planning & Building Control", command=lambda: self._load_preset("civil_council_planning_building"))
+        civil_menu.add_command(label="♻️ Local Councils: Environmental Services & Waste", command=lambda: self._load_preset("civil_council_env_waste"))
+        civil_menu.add_command(label="🏥 NHS Hospitals & Healthcare Trusts (Estates/IT)", command=lambda: self._load_preset("civil_nhs_estates_tech"))
+        civil_menu.add_command(label="🚑 Ambulance Services & EMS Logistics", command=lambda: self._load_preset("civil_ambulance_ops"))
+        civil_menu.add_command(label="🚒 Fire & Rescue Authorities (Safety & Fleet)", command=lambda: self._load_preset("civil_fire_safety_fleet"))
+        civil_menu.add_command(label="⚡ Electricity Grid & DNO Networks", command=lambda: self._load_preset("civil_utilities_electricity"))
+        civil_menu.add_command(label="⛽ Gas Distribution Networks", command=lambda: self._load_preset("civil_utilities_gas"))
+        civil_menu.add_command(label="💧 Water & Sewage Authorities", command=lambda: self._load_preset("civil_utilities_water"))
+        civil_menu.add_command(label="📦 Civil Procurement & Contracts", command=lambda: self._load_preset("civil_procurement_contracts"))
+        civil_menu.add_command(label="🛡️ Civil Security & Emergency Resilience", command=lambda: self._load_preset("civil_security_resilience"))
+        templates_menu.add_cascade(label="🏛️ Civil Services & Utilities", menu=civil_menu)
+        
         # Sub-Menu: ♻️ UK Environmental Registers (EA / SEPA / NRW)
         env_menu = tk.Menu(templates_menu, tearoff=0)
         env_menu.add_command(label="🏴󠁧󠁢󠁥󠁮󠁧󠁿 EA: Waste Permitting & Operations (England)", command=lambda: self._load_preset("ea_waste_ops"))
@@ -2110,50 +2436,9 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
     # TAB 1: QUERY BUILDER
     # -------------------------------------------------------------
     def _build_tab_builder(self):
-        # Scrollable container for Query Builder & Presets tab (Adapts to any screen resolution / window maximize)
-        self.builder_canvas = tk.Canvas(self.tab_builder, bg="#F1F5F9", highlightthickness=0)
-        self.builder_scrollbar = ttk.Scrollbar(self.tab_builder, orient="vertical", command=self.builder_canvas.yview)
-        self.builder_scroll_frame = ttk.Frame(self.builder_canvas, padding="6")
-        
-        self.builder_scroll_frame.bind(
-            "<Configure>",
-            lambda e: self.builder_canvas.configure(scrollregion=self.builder_canvas.bbox("all"))
-        )
-        self.builder_canvas_win = self.builder_canvas.create_window((0, 0), window=self.builder_scroll_frame, anchor="nw")
-        self.builder_canvas.configure(yscrollcommand=self.builder_scrollbar.set)
-        
-        # Auto-expand inner frame to match full canvas width when window is maximized or resized
-        self.builder_canvas.bind("<Configure>", lambda e: self.builder_canvas.itemconfig(self.builder_canvas_win, width=e.width))
-        
-        self.builder_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.builder_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Smooth Mouse Wheel scrolling handlers
-        def _on_builder_mousewheel(event):
-            try:
-                if event.delta:
-                    self.builder_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-                elif event.num == 4:
-                    self.builder_canvas.yview_scroll(-1, "units")
-                elif event.num == 5:
-                    self.builder_canvas.yview_scroll(1, "units")
-            except Exception:
-                pass
-
-        def _bind_builder_mousewheel(event=None):
-            self.builder_canvas.bind_all("<MouseWheel>", _on_builder_mousewheel)
-            self.builder_canvas.bind_all("<Button-4>", _on_builder_mousewheel)
-            self.builder_canvas.bind_all("<Button-5>", _on_builder_mousewheel)
-
-        def _unbind_builder_mousewheel(event=None):
-            self.builder_canvas.unbind_all("<MouseWheel>")
-            self.builder_canvas.unbind_all("<Button-4>")
-            self.builder_canvas.unbind_all("<Button-5>")
-
-        self.builder_canvas.bind("<Enter>", _bind_builder_mousewheel)
-        self.builder_canvas.bind("<Leave>", _unbind_builder_mousewheel)
-        self.builder_scroll_frame.bind("<Enter>", _bind_builder_mousewheel)
-        self.builder_scroll_frame.bind("<Leave>", _unbind_builder_mousewheel)
+        # Query Builder & Presets tab - Direct container fitting entirely on one screen (no outer main window scroll)
+        self.builder_scroll_frame = ttk.Frame(self.tab_builder, padding="4")
+        self.builder_scroll_frame.pack(fill=tk.BOTH, expand=True)
 
         # 1. Search Engine & History Row
         engine_preset_frame = ttk.LabelFrame(self.builder_scroll_frame, text=" 🌐 Search Engine & Template Selector ", padding="4")
@@ -2201,6 +2486,19 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.preset_var = tk.StringVar(value="custom")
         presets = [
             ("-- Clean / Blank Form --", "custom"),
+            ("--- 🏛️ CIVIL SERVICES, UTILITIES & PUBLIC BODIES ---", "header_civil"),
+            ("🏛️ All Civil Services & Utilities (Combined)", "civil_all_combined"),
+            ("👮 Police: Tech, ICT & Cyber Crime Units", "civil_police_tech"),
+            ("🏛️ Councils: Planning, Building Control & Dev", "civil_council_planning_building"),
+            ("🌿 Councils: Environmental Health, Waste & Climate", "civil_council_env_waste"),
+            ("🏥 NHS: Estates, Facilities & Digital Health", "civil_nhs_estates_tech"),
+            ("🚑 Ambulance: Operations, Fleet & Systems", "civil_ambulance_ops"),
+            ("🚒 Fire: Protection, Business Safety & Fleet", "civil_fire_safety_fleet"),
+            ("⚡ Electricity: Grid, DNOs & Substation Systems", "civil_utilities_electricity"),
+            ("⛽ Gas: Networks, Pipeline Integrity & Safety", "civil_utilities_gas"),
+            ("💧 Water: Quality, Treatment & Infrastructure", "civil_utilities_water"),
+            ("📦 Civil Procurement, Contracts & Tenders", "civil_procurement_contracts"),
+            ("🛡️ Civil Security, Emergency Planning & Resilience", "civil_security_resilience"),
             ("--- 🏖️ TOURISM, HOSPITALITY & TRAVEL SECTOR ---", "header_tourism"),
             ("🏖️ Tourism: All-in-One (Hotels, Restorants, Tours, Transfers, Agencies)", "gen_tourism_all"),
             ("🏨 Tourism: Hotels & Luxury Resorts", "gen_hotels_resorts"),
@@ -2292,6 +2590,11 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self.criteria_notebook.add(self.subtab_generalized, text=" 🌐 Tab 2: Generalized Industry & Facility Search (Multi-Group Boolean) ")
         self._build_subtab_generalized()
         
+        # Sub-Tab 3: Civil Services, Utilities & Public Bodies
+        self.subtab_civil = ttk.Frame(self.criteria_notebook, padding="4")
+        self.criteria_notebook.add(self.subtab_civil, text=" 🏛️ Tab 3: Civil Services, Utilities & Regulators ")
+        self._build_subtab_civil()
+        
         self.criteria_notebook.bind("<<NotebookTabChanged>>", self._on_criteria_tab_changed)
 
         # 3. Live Assembled Dork Preview Box
@@ -2299,10 +2602,19 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         query_preview_frame.pack(fill=tk.X, pady=(0, 2))
         
         self.assembled_query_var = tk.StringVar()
-        self.query_preview_entry = ttk.Entry(query_preview_frame, textvariable=self.assembled_query_var, font=("Consolas", 10, "bold"), foreground="#1E293B")
-        self.query_preview_entry.pack(fill=tk.X, pady=(0, 2))
-        self.query_preview_entry.bind("<Return>", lambda event: self._start_search())
-        ToolTip(self.query_preview_entry, "This query updates in real-time as you edit form fields above. You can also edit it directly here.")
+        self.query_preview_box = AutoExpandingTextBox(
+            query_preview_frame,
+            placeholder="Assembled search query will appear here...",
+            string_var=self.assembled_query_var,
+            font_spec=("Consolas", 10, "bold"),
+            foreground="#1E293B",
+            min_lines=1,
+            max_lines=3
+        )
+        self.query_preview_box.pack(fill=tk.X, pady=(0, 2))
+        self.query_preview_box.text.bind("<Return>", lambda event: (self._start_search(), "break")[1])
+        ToolTip(self.query_preview_box.text, "This query updates in real-time as you edit form fields above. You can also edit it directly here.")
+        self.query_preview_entry = self.query_preview_box.text
         
         preview_btn_bar = ttk.Frame(query_preview_frame)
         preview_btn_bar.pack(fill=tk.X)
@@ -2425,10 +2737,10 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         hl_org.pack(side=tk.LEFT)
         
         self.org_var = tk.StringVar(value="")
-        org_entry = ttk.Entry(r2, textvariable=self.org_var, font=("Segoe UI", 9), width=50)
-        org_entry.pack(side=tk.LEFT, padx=(0, 8), fill=tk.X, expand=True)
-        self.org_ph = PlaceholderHelper(org_entry, 'e.g. "Hilton Hotels" OR "Tourism Agency" OR "Marriott"', self.org_var, self._rebuild_query)
-        ToolTip(org_entry, "Enter comma-separated or quoted phrases. Click '+ Quotes/OR' to auto-format.")
+        self.org_box = AutoExpandingTextBox(r2, placeholder='e.g. "Hilton Hotels" OR "Tourism Agency" OR "Marriott"', string_var=self.org_var, on_change=self._rebuild_query)
+        self.org_box.pack(side=tk.LEFT, padx=(0, 8), fill=tk.X, expand=True)
+        self.org_ph = self.org_box
+        ToolTip(self.org_box.text, "Enter comma-separated or quoted phrases. Click '+ Quotes/OR' to auto-format.")
         
         btn_org_add = ttk.Button(r2, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.org_var))
         btn_org_add.pack(side=tk.RIGHT)
@@ -2442,10 +2754,10 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         hl_titles.pack(side=tk.LEFT)
         
         self.titles_var = tk.StringVar(value="")
-        titles_entry = ttk.Entry(r3, textvariable=self.titles_var, font=("Segoe UI", 9), width=50)
-        titles_entry.pack(side=tk.LEFT, padx=(0, 8), fill=tk.X, expand=True)
-        self.titles_ph = PlaceholderHelper(titles_entry, 'e.g. ("General Manager" OR "Operations Director" OR "Head of Sales")', self.titles_var, self._rebuild_query)
-        ToolTip(titles_entry, "Target job titles or role variations.")
+        self.titles_box = AutoExpandingTextBox(r3, placeholder='e.g. ("General Manager" OR "Operations Director" OR "Head of Sales")', string_var=self.titles_var, on_change=self._rebuild_query)
+        self.titles_box.pack(side=tk.LEFT, padx=(0, 8), fill=tk.X, expand=True)
+        self.titles_ph = self.titles_box
+        ToolTip(self.titles_box.text, "Target job titles or role variations.")
         
         btn_title_add = ttk.Button(r3, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.titles_var))
         btn_title_add.pack(side=tk.RIGHT)
@@ -2496,10 +2808,10 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         custom_dom_lbl = ttk.Label(r5, text="Domain:")
         custom_dom_lbl.pack(side=tk.LEFT, padx=(4, 2))
         
-        custom_dom_entry = ttk.Entry(r5, textvariable=self.custom_email_domain_var, font=("Segoe UI", 9), width=18)
-        custom_dom_entry.pack(side=tk.LEFT, padx=(0, 5))
-        self.custom_dom_ph = PlaceholderHelper(custom_dom_entry, 'e.g. @hilton.com', self.custom_email_domain_var, self._rebuild_query)
-        ToolTip(custom_dom_entry, "Search for company-specific email domain (e.g. hilton.com or @hilton.com).")
+        self.custom_dom_box = AutoExpandingTextBox(r5, placeholder='e.g. @hilton.com', string_var=self.custom_email_domain_var, on_change=self._rebuild_query, width=18)
+        self.custom_dom_box.pack(side=tk.LEFT, padx=(0, 5))
+        self.custom_dom_ph = self.custom_dom_box
+        ToolTip(self.custom_dom_box.text, "Search for company-specific email domain (e.g. hilton.com or @hilton.com).")
         
         # Row 6: Exclude Keywords & Filetype
         r6 = ttk.Frame(self.subtab_targeted)
@@ -2509,17 +2821,44 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         hl_exclude.pack(side=tk.LEFT)
         
         self.exclude_var = tk.StringVar(value="")
-        exclude_entry = ttk.Entry(r6, textvariable=self.exclude_var, font=("Segoe UI", 9), width=32)
-        exclude_entry.pack(side=tk.LEFT, padx=(0, 12))
-        self.exclude_ph = PlaceholderHelper(exclude_entry, 'e.g. -jobs -recruiter -hiring -intern', self.exclude_var, self._rebuild_query)
-        ToolTip(exclude_entry, "Words prefixed with '-' will be excluded from search results.")
+        self.exclude_box = AutoExpandingTextBox(r6, placeholder='e.g. -jobs -recruiter -hiring -intern', string_var=self.exclude_var, on_change=self._rebuild_query)
+        self.exclude_box.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
+        self.exclude_ph = self.exclude_box
+        ToolTip(self.exclude_box.text, "Words prefixed with '-' will be excluded from search results.")
         
-        hl_filetype = self._create_help_label(r6, "Filetype (filetype:):", "Filters for specific file formats like PDF resumes, Excel sheets, or configuration files.", width=16)
+        self.targeted_exclude_combo = ttk.Combobox(r6, values=[
+            "Choose Exclusion / + Add More...",
+            "🚫 Exclude Social Media (Instagram, Facebook, TikTok, X, YouTube)",
+            "💼 Exclude Job & Recruitment Boards (Indeed, TotalJobs, Reed)",
+            "🛡️ Exclude Directories (Yell, Yelp, 192, Thomson)",
+            "📰 Exclude News & Media (BBC, Guardian, Daily Mail)",
+            "🏛️ Exclude Public Sector / Government (.gov.uk, Councils)",
+            "🛡️ Exclude All Noise (Social + Jobs + Directories + News)",
+            "(Clear Exclusions)"
+        ], state="readonly", width=26)
+        self.targeted_exclude_combo.current(0)
+        self.targeted_exclude_combo.pack(side=tk.LEFT, padx=(0, 4))
+        self.targeted_exclude_combo.bind("<<ComboboxSelected>>", self._on_targeted_exclude_selected)
+        ToolTip(self.targeted_exclude_combo, "Select exclusion pattern to automatically append to exclusions.")
+        
+        btn_add_targeted_ex = ttk.Button(r6, text="+ Add", style="Accent.TButton", command=self._add_targeted_exclude_selected)
+        btn_add_targeted_ex.pack(side=tk.LEFT, padx=(0, 4))
+        ToolTip(btn_add_targeted_ex, "Appends the selected exclusion pattern to your exclusions.")
+        
+        btn_multi_targeted_ex = ttk.Button(r6, text="📋 Multi-Select...", style="Secondary.TButton", command=lambda: self._open_multi_exclusion_dialog(self.exclude_ph, self.exclude_var))
+        btn_multi_targeted_ex.pack(side=tk.LEFT, padx=(0, 4))
+        ToolTip(btn_multi_targeted_ex, "Opens checklist to select multiple negative exclusion categories at once.")
+        
+        btn_clear_targeted_ex = ttk.Button(r6, text="Clear", style="Secondary.TButton", command=lambda: (self.exclude_ph.set_real_value(""), self._rebuild_query()))
+        btn_clear_targeted_ex.pack(side=tk.LEFT, padx=(0, 8))
+        ToolTip(btn_clear_targeted_ex, "Clears negative exclusion filters.")
+        
+        hl_filetype = self._create_help_label(r6, "Filetype:", "Filters for specific file formats like PDF resumes or docs.", width=8)
         hl_filetype.pack(side=tk.LEFT)
         
         self.filetype_var = tk.StringVar(value="None")
-        filetype_combo = ttk.Combobox(r6, textvariable=self.filetype_var, values=["None", "filetype:pdf", "filetype:doc OR filetype:docx", "filetype:xls OR filetype:xlsx", "filetype:config", "filetype:env", "filetype:sql"], width=18, state="readonly")
-        filetype_combo.pack(side=tk.LEFT)
+        filetype_combo = ttk.Combobox(r6, textvariable=self.filetype_var, values=["None", "filetype:pdf", "filetype:doc OR filetype:docx", "filetype:xls OR filetype:xlsx", "filetype:config", "filetype:env", "filetype:sql"], width=13, state="readonly")
+        filetype_combo.pack(side=tk.RIGHT)
         filetype_combo.bind("<<ComboboxSelected>>", lambda e: self._rebuild_query())
         ToolTip(filetype_combo, "Select filetype extension to discover documents or files.")
 
@@ -2569,10 +2908,10 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         hl_ind = self._create_help_label(r1, "Facility / Industry (OR):", "Group 1: Target tourism sectors, hotels, restaurants, tour operators, transfers, or industry activities. Multiple terms are combined with OR.", width=21)
         hl_ind.pack(side=tk.LEFT)
         
-        gen_ind_entry = ttk.Entry(r1, textvariable=self.gen_industry_var, font=("Segoe UI", 9), width=38)
-        gen_ind_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
-        self.gen_ind_ph = PlaceholderHelper(gen_ind_entry, 'e.g. ("Hotels" OR "Restaurants" OR "Tour Operators" OR "Transfer" OR "Holiday Agencies")', self.gen_industry_var, self._rebuild_query)
-        ToolTip(gen_ind_entry, 'Enter industry/sector terms e.g. ("Hotels" OR "Restaurants" OR "Tour Operators" OR "Transfer" OR "Holiday Agencies") or comma-separated.')
+        self.gen_ind_box = AutoExpandingTextBox(r1, placeholder='e.g. ("Hotels" OR "Restaurants" OR "Tour Operators" OR "Transfer" OR "Holiday Agencies")', string_var=self.gen_industry_var, on_change=self._rebuild_query)
+        self.gen_ind_box.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
+        self.gen_ind_ph = self.gen_ind_box
+        ToolTip(self.gen_ind_box.text, 'Enter industry/sector terms e.g. ("Hotels" OR "Restaurants" OR "Tour Operators" OR "Transfer" OR "Holiday Agencies") or comma-separated.')
         
         self.gen_category_combo = ttk.Combobox(r1, values=[
             "Choose Preset Category...",
@@ -2616,10 +2955,10 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         hl_scale = self._create_help_label(r2, "Scale / Multi-Site (OR):", "Group 2: Target footprint, multi-location indicators, chain branches, depots, headquarters, or national operations.", width=21)
         hl_scale.pack(side=tk.LEFT)
         
-        gen_scale_entry = ttk.Entry(r2, textvariable=self.gen_scale_var, font=("Segoe UI", 9), width=38)
-        gen_scale_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
-        self.gen_scale_ph = PlaceholderHelper(gen_scale_entry, 'e.g. ("multiple locations" OR "chain" OR "nationwide" OR "head office")', self.gen_scale_var, self._rebuild_query)
-        ToolTip(gen_scale_entry, 'Enter operational footprint terms e.g. ("multiple locations" OR "chain" OR "depots across" OR "head office").')
+        self.gen_scale_box = AutoExpandingTextBox(r2, placeholder='e.g. ("multiple locations" OR "chain" OR "nationwide" OR "head office")', string_var=self.gen_scale_var, on_change=self._rebuild_query)
+        self.gen_scale_box.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
+        self.gen_scale_ph = self.gen_scale_box
+        ToolTip(self.gen_scale_box.text, 'Enter operational footprint terms e.g. ("multiple locations" OR "chain" OR "depots across" OR "head office").')
         
         self.gen_scale_combo = ttk.Combobox(r2, values=[
             "Choose Scale...",
@@ -2645,10 +2984,10 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         hl_geo = self._create_help_label(r3, "Country / Region (OR):", "Group 3: Target countries, tourism destinations, home nations, counties, or regional territories.", width=21)
         hl_geo.pack(side=tk.LEFT)
         
-        gen_geo_entry = ttk.Entry(r3, textvariable=self.gen_geo_var, font=("Segoe UI", 9), width=38)
-        gen_geo_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
-        self.gen_geo_ph = PlaceholderHelper(gen_geo_entry, 'e.g. ("United Kingdom" OR "London" OR "Europe" OR "United States")', self.gen_geo_var, self._rebuild_query)
-        ToolTip(gen_geo_entry, 'Enter location terms e.g. ("United Kingdom" OR "London" OR "Europe" OR "United States").')
+        self.gen_geo_box = AutoExpandingTextBox(r3, placeholder='e.g. ("United Kingdom" OR "London" OR "Europe" OR "United States")', string_var=self.gen_geo_var, on_change=self._rebuild_query)
+        self.gen_geo_box.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
+        self.gen_geo_ph = self.gen_geo_box
+        ToolTip(self.gen_geo_box.text, 'Enter location terms e.g. ("United Kingdom" OR "London" OR "Europe" OR "United States").')
         
         self.gen_geo_combo = ttk.Combobox(r3, values=[
             "Choose Region...",
@@ -2676,27 +3015,35 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         hl_ex = self._create_help_label(r4, "Negative Exclusions (-):", "Words or domains prefixed with minus '-' will be completely removed from results (e.g. OTA booking aggregators, municipal tips, job boards).", width=21)
         hl_ex.pack(side=tk.LEFT)
         
-        gen_ex_entry = ttk.Entry(r4, textvariable=self.gen_exclude_var, font=("Segoe UI", 9), width=38)
-        gen_ex_entry.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
-        self.gen_ex_ph = PlaceholderHelper(gen_ex_entry, 'e.g. -jobs -careers -directory -tripadvisor.com -booking.com', self.gen_exclude_var, self._rebuild_query)
-        ToolTip(gen_ex_entry, 'Enter negative exclusion terms e.g. -jobs -careers -directory -tripadvisor.com -booking.com')
+        self.gen_ex_box = AutoExpandingTextBox(r4, placeholder='e.g. -jobs -careers -directory -tripadvisor.com -booking.com', string_var=self.gen_exclude_var, on_change=self._rebuild_query)
+        self.gen_ex_box.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
+        self.gen_ex_ph = self.gen_ex_box
+        ToolTip(self.gen_ex_box.text, 'Enter negative exclusion terms e.g. -jobs -careers -directory -tripadvisor.com -booking.com')
         
         self.gen_exclude_combo = ttk.Combobox(r4, values=[
-            "Choose Exclusion Pattern...",
+            "Choose Exclusion / + Add More...",
+            "🚫 Exclude Social Media (Instagram, Facebook, TikTok, X, YouTube)",
             "🏖️ Exclude OTA Booking Portals (TripAdvisor, Booking, Expedia, Airbnb, etc.)",
             "🛡️ Exclude Directories (Yell, Yelp, 192, Thomson, etc.)",
-            "🛡️ Exclude News, Media & Press Outlets (BBC, Guardian, etc.)",
-            "🛡️ Exclude Directories + News + Job Boards (Pure Businesses)",
-            "🛡️ Exclude Council Tips + Directories + News + Jobs",
-            "🛡️ Exclude Municipal/Council Tips & .gov.uk",
-            "🛡️ Exclude Job & Recruitment Boards Only",
-            "🛡️ Exclude Public Sector / Government",
-            "(No Exclusions)"
-        ], state="readonly", width=42)
+            "💼 Exclude Job & Recruitment Boards (Indeed, TotalJobs, Reed, etc.)",
+            "📰 Exclude News, Media & Press Outlets (BBC, Guardian, etc.)",
+            "🏛️ Exclude Council Tips & .gov.uk",
+            "🛡️ Exclude Social Media + Directories + Jobs (Pure Commercial Sites)",
+            "🛡️ Exclude All Noise (Social + Booking + Directories + News + Jobs)",
+            "(Clear Exclusions)"
+        ], state="readonly", width=34)
         self.gen_exclude_combo.current(0)
-        self.gen_exclude_combo.pack(side=tk.LEFT, padx=(0, 6))
+        self.gen_exclude_combo.pack(side=tk.LEFT, padx=(0, 4))
         self.gen_exclude_combo.bind("<<ComboboxSelected>>", self._on_gen_exclude_selected)
         ToolTip(self.gen_exclude_combo, "Select pre-configured negative exclusion cleaners.")
+        
+        btn_add_gen_ex = ttk.Button(r4, text="+ Add Exclude", style="Accent.TButton", command=self._add_gen_exclude_selected)
+        btn_add_gen_ex.pack(side=tk.LEFT, padx=(0, 4))
+        ToolTip(btn_add_gen_ex, "Appends the selected exclusion pattern to your exclusions without removing existing ones.")
+        
+        btn_multi_gen_ex = ttk.Button(r4, text="📋 Multi-Select...", style="Secondary.TButton", command=lambda: self._open_multi_exclusion_dialog(self.gen_ex_ph, self.gen_exclude_var))
+        btn_multi_gen_ex.pack(side=tk.LEFT, padx=(0, 4))
+        ToolTip(btn_multi_gen_ex, "Opens checklist to select multiple negative exclusion categories at once.")
         
         btn_clear_ex = ttk.Button(r4, text="Clear Exclude", style="Secondary.TButton", command=lambda: (self.gen_exclude_ph.set_real_value(""), self._rebuild_query()))
         btn_clear_ex.pack(side=tk.RIGHT)
@@ -2712,18 +3059,18 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         # intext modifier
         lbl_intext = ttk.Label(r5, text="intext:")
         lbl_intext.pack(side=tk.LEFT, padx=(0, 2))
-        gen_intext_entry = ttk.Entry(r5, textvariable=self.gen_intext_var, width=12)
-        gen_intext_entry.pack(side=tk.LEFT, padx=(0, 8))
-        self.gen_intext_ph = PlaceholderHelper(gen_intext_entry, 'e.g. reservations', self.gen_intext_var, self._rebuild_query)
-        ToolTip(gen_intext_entry, "Optional keyword required in body text (e.g. reservations or contact).")
+        self.gen_intext_box = AutoExpandingTextBox(r5, placeholder='e.g. reservations', string_var=self.gen_intext_var, on_change=self._rebuild_query, width=14)
+        self.gen_intext_box.pack(side=tk.LEFT, padx=(0, 8))
+        self.gen_intext_ph = self.gen_intext_box
+        ToolTip(self.gen_intext_box.text, "Optional keyword required in body text (e.g. reservations or contact).")
         
         # inurl modifier
         lbl_inurl = ttk.Label(r5, text="inurl:")
         lbl_inurl.pack(side=tk.LEFT, padx=(0, 2))
-        gen_inurl_entry = ttk.Entry(r5, textvariable=self.gen_inurl_var, width=12)
-        gen_inurl_entry.pack(side=tk.LEFT, padx=(0, 8))
-        self.gen_inurl_ph = PlaceholderHelper(gen_inurl_entry, 'e.g. hotels', self.gen_inurl_var, self._rebuild_query)
-        ToolTip(gen_inurl_entry, "Optional keyword required in URL path (e.g. hotels or tours).")
+        self.gen_inurl_box = AutoExpandingTextBox(r5, placeholder='e.g. hotels', string_var=self.gen_inurl_var, on_change=self._rebuild_query, width=14)
+        self.gen_inurl_box.pack(side=tk.LEFT, padx=(0, 8))
+        self.gen_inurl_ph = self.gen_inurl_box
+        ToolTip(self.gen_inurl_box.text, "Optional keyword required in URL path (e.g. hotels or tours).")
         
         # Filetype
         lbl_ft = ttk.Label(r5, text="filetype:")
@@ -2756,6 +3103,368 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         lbl_tip_gen = ttk.Label(r6, text="💡 Click '🚀 Search & Extract Leads' below to execute this query across your selected search engine.", foreground="#64748B", font=("Segoe UI", 8, "italic"))
         lbl_tip_gen.pack(side=tk.LEFT)
 
+    def _build_subtab_civil(self):
+        """Builds Tab 3 of Search Criteria: Civil Services, Local Councils, Police, NHS, Fire & Utilities search builder."""
+        # Strategy Intro & Quick Action Banner
+        intro_frame = ttk.Frame(self.subtab_civil)
+        intro_frame.pack(fill=tk.X, pady=(0, 4))
+        
+        lbl_intro = ttk.Label(intro_frame, text="ℹ️ Strategy: Target public sector civil services, emergency authorities, local councils, gas, electric & water utilities with department & key contact matchers.", foreground="#475569", font=("Segoe UI", 8, "italic"))
+        lbl_intro.pack(side=tk.LEFT)
+        
+        btn_guide = ttk.Button(intro_frame, text="💡 Department Guide", style="Accent.TButton", command=self._show_civil_guide)
+        btn_guide.pack(side=tk.RIGHT, padx=(4, 0))
+        ToolTip(btn_guide, "Open the comprehensive Department Matching Guide across Civil Services, Emergency Forces, and Utilities.")
+        
+        btn_quick_police = ttk.Button(intro_frame, text="⭐ Police Tech", style="Secondary.TButton", command=lambda: self._load_preset("civil_police_tech"))
+        btn_quick_police.pack(side=tk.RIGHT, padx=2)
+        ToolTip(btn_quick_police, "Quick load Police IT, ICT, and Cyber Crime search.")
+        
+        btn_quick_council = ttk.Button(intro_frame, text="⭐ Council Building", style="Secondary.TButton", command=lambda: self._load_preset("civil_council_planning_building"))
+        btn_quick_council.pack(side=tk.RIGHT, padx=2)
+        ToolTip(btn_quick_council, "Quick load Council Planning, Building Control, and Infrastructure search.")
+
+        # Row 1: Civil Service / Authority / Utility Sector (OR)
+        r1 = ttk.Frame(self.subtab_civil)
+        r1.pack(fill=tk.X, pady=2)
+        
+        hl_sec = self._create_help_label(r1, "Civil / Utility Sector (OR):", "Group 1: Target civil service bodies, councils, police forces, NHS trusts, fire brigades, gas, electricity, or water utilities.", width=23)
+        hl_sec.pack(side=tk.LEFT)
+        
+        self.civil_sec_box = AutoExpandingTextBox(r1, placeholder='e.g. ("Police" OR "Local Council" OR "NHS Trust" OR "Fire Service" OR "National Grid" OR "Cadent Gas")', string_var=self.civil_sector_var, on_change=self._rebuild_query)
+        self.civil_sec_box.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
+        self.civil_sector_ph = self.civil_sec_box
+        ToolTip(self.civil_sec_box.text, 'Enter civil service, authority, or utility terms e.g. ("Police" OR "Council" OR "NHS" OR "Fire" OR "National Grid" OR "Cadent Gas") or comma-separated.')
+        
+        self.civil_sector_combo = ttk.Combobox(r1, values=[
+            "Choose Civil / Utility Sector...",
+            "🏛️ All Civil Services & Utilities (Combined)",
+            "👮 Police & Law Enforcement (Forces, Constabularies & PCC)",
+            "🏛️ Local Councils & Municipalities (County, City, Borough, Unitary)",
+            "🏥 NHS Hospitals & Healthcare Trusts (Acute, ICB, Health Boards)",
+            "🚑 Ambulance Services & Paramedic Trusts",
+            "🚒 Fire & Rescue Authorities (Fire Brigades & Rescue)",
+            "⚡ Electricity Networks & DNOs (National Grid, UK Power Networks, SSE, Northern Powergrid)",
+            "⛽ Gas Distribution Networks (Cadent, SGN, Northern Gas, Wales & West)",
+            "💧 Water & Sewage Authorities (Thames Water, Severn Trent, United Utilities, etc.)",
+            "🛣️ Transport, Highways & Rail Authorities (National Highways, TfL, Network Rail)",
+            "🌿 Environmental & Safety Regulators (EA, SEPA, NRW, HSE, Ofgem, Ofwat)",
+            "(Clear Sector)"
+        ], state="readonly", width=42)
+        self.civil_sector_combo.current(0)
+        self.civil_sector_combo.pack(side=tk.LEFT, padx=(0, 6))
+        self.civil_sector_combo.bind("<<ComboboxSelected>>", self._on_civil_sector_selected)
+        ToolTip(self.civil_sector_combo, "Select pre-built civil service or utility authority keyword groups.")
+        
+        btn_sec_add = ttk.Button(r1, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.civil_sector_var))
+        btn_sec_add.pack(side=tk.RIGHT)
+        ToolTip(btn_sec_add, "Converts comma-separated words into quoted OR group.")
+
+        # Row 2: Department / Functional Area / Division (OR)
+        r2 = ttk.Frame(self.subtab_civil)
+        r2.pack(fill=tk.X, pady=2)
+        
+        hl_dept = self._create_help_label(r2, "Department / Area (OR):", "Group 2: Target specific functional departments (IT, Environment, Building Control, Security, Procurement, Estates, Operations).", width=23)
+        hl_dept.pack(side=tk.LEFT)
+        
+        self.civil_dept_box = AutoExpandingTextBox(r2, placeholder='e.g. ("IT Department" OR "Environmental Health" OR "Building Control" OR "Security" OR "Procurement")', string_var=self.civil_dept_var, on_change=self._rebuild_query)
+        self.civil_dept_box.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
+        self.civil_dept_ph = self.civil_dept_box
+        ToolTip(self.civil_dept_box.text, 'Enter department keywords e.g. ("IT" OR "Environmental Services" OR "Building Control" OR "Security" OR "Procurement").')
+        
+        self.civil_dept_combo = ttk.Combobox(r2, values=[
+            "Choose Department / Division...",
+            "💻 Technology, ICT, Digital & Cyber Security",
+            "🌿 Environmental Services, Sustainability, Climate & Waste",
+            "🏗️ Planning, Development, Building Control & Infrastructure",
+            "🛡️ Security, Emergency Planning, Resilience & Health & Safety",
+            "📦 Procurement, Commercial, Contracts & Supply Chain",
+            "🏢 Estates, Facilities Management & Property Assets",
+            "👥 Operations, Fleet Management & Transport Logistics",
+            "📊 Finance, Audit, Corporate Governance & Legal",
+            "🚨 Public Protection, Licensing & Regulatory Enforcement",
+            "🤝 Customer Services, Public Enquiries & FOI (Freedom of Information)",
+            "(Clear Department)"
+        ], state="readonly", width=42)
+        self.civil_dept_combo.current(0)
+        self.civil_dept_combo.pack(side=tk.LEFT, padx=(0, 6))
+        self.civil_dept_combo.bind("<<ComboboxSelected>>", self._on_civil_dept_selected)
+        ToolTip(self.civil_dept_combo, "Select pre-built cross-sector department keyword groups.")
+        
+        btn_dept_add = ttk.Button(r2, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.civil_dept_var))
+        btn_dept_add.pack(side=tk.RIGHT)
+        ToolTip(btn_dept_add, "Converts comma-separated words into quoted OR group.")
+
+        # Row 3: Key Roles / Contact Details / Focus (OR)
+        r3 = ttk.Frame(self.subtab_civil)
+        r3.pack(fill=tk.X, pady=2)
+        
+        hl_con = self._create_help_label(r3, "Contact / Role Focus (OR):", "Group 3: Target heads of department, directors, contact details, public phone switchboards, FOI inboxes, or public registers.", width=23)
+        hl_con.pack(side=tk.LEFT)
+        
+        self.civil_con_box = AutoExpandingTextBox(r3, placeholder='e.g. ("head of" OR "director" OR "contact us" OR "enquiries" OR "switchboard" OR "foi")', string_var=self.civil_contact_var, on_change=self._rebuild_query)
+        self.civil_con_box.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
+        self.civil_contact_ph = self.civil_con_box
+        ToolTip(self.civil_con_box.text, 'Enter contact indicators e.g. ("head of" OR "director" OR "contact us" OR "enquiries" OR "switchboard").')
+        
+        self.civil_contact_combo = ttk.Combobox(r3, values=[
+            "Choose Contact / Role Filter...",
+            "👤 Heads of Department, Directors & Key Officers",
+            "📞 Direct Contact Numbers, Switchboards & Helplines",
+            "📧 Official Department Email Addresses & Inboxes",
+            "📑 Public Registers, FOI Disclosures & Meeting Minutes",
+            "📄 Strategy Documents, Annual Reports & Tender Filings (.pdf)",
+            "(Open / Any Contact)"
+        ], state="readonly", width=42)
+        self.civil_contact_combo.current(0)
+        self.civil_contact_combo.pack(side=tk.LEFT, padx=(0, 6))
+        self.civil_contact_combo.bind("<<ComboboxSelected>>", self._on_civil_contact_selected)
+        ToolTip(self.civil_contact_combo, "Select pre-built role and contact detail filters.")
+        
+        btn_con_add = ttk.Button(r3, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.civil_contact_var))
+        btn_con_add.pack(side=tk.RIGHT)
+        ToolTip(btn_con_add, "Converts comma-separated words into quoted OR group.")
+
+        # Row 4: Country / Region / Jurisdiction (OR)
+        r4 = ttk.Frame(self.subtab_civil)
+        r4.pack(fill=tk.X, pady=2)
+        
+        hl_geo = self._create_help_label(r4, "Country / Region (OR):", "Group 4: Target geographic territory, council area, home nations, or regional jurisdiction.", width=23)
+        hl_geo.pack(side=tk.LEFT)
+        
+        self.civil_geo_box = AutoExpandingTextBox(r4, placeholder='e.g. ("United Kingdom" OR "London" OR "Scotland" OR "Wales")', string_var=self.civil_geo_var, on_change=self._rebuild_query)
+        self.civil_geo_box.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
+        self.civil_geo_ph = self.civil_geo_box
+        ToolTip(self.civil_geo_box.text, 'Enter geographic region e.g. ("United Kingdom" OR "London" OR "Scotland" OR "Wales").')
+        
+        self.civil_geo_combo = ttk.Combobox(r4, values=[
+            "Choose Region...",
+            "🇬🇧 United Kingdom & Home Nations",
+            "🏴󠁧󠁢󠁥󠁮󠁧󠁿 England & Greater London",
+            "🏴󠁧󠁢󠁳󠁣󠁴󠁿 Scotland Nationwide",
+            "🏴󠁧󠁢󠁷󠁬󠁳󠁿 Wales Nationwide",
+            "☘️ Northern Ireland Nationwide",
+            "(Worldwide / Open Region)"
+        ], state="readonly", width=42)
+        self.civil_geo_combo.current(0)
+        self.civil_geo_combo.pack(side=tk.LEFT, padx=(0, 6))
+        self.civil_geo_combo.bind("<<ComboboxSelected>>", self._on_civil_geo_selected)
+        ToolTip(self.civil_geo_combo, "Select geographic boundary filters.")
+        
+        btn_geo_add = ttk.Button(r4, text="+ Quotes/OR", style="Secondary.TButton", command=lambda: self._format_as_or_group(self.civil_geo_var))
+        btn_geo_add.pack(side=tk.RIGHT)
+        ToolTip(btn_geo_add, "Converts comma-separated words into quoted OR group.")
+
+        # Row 5: Negative Exclusions & Noise Cleaners (-)
+        r5 = ttk.Frame(self.subtab_civil)
+        r5.pack(fill=tk.X, pady=2)
+        
+        hl_ex = self._create_help_label(r5, "Negative Exclusions (-):", "Words or domains prefixed with minus '-' will be excluded (e.g. job boards, third-party directories, opinion forums, news).", width=23)
+        hl_ex.pack(side=tk.LEFT)
+        
+        self.civil_ex_box = AutoExpandingTextBox(r5, placeholder='e.g. -jobs -careers -recruiting -yell.com -wikipedia.org', string_var=self.civil_exclude_var, on_change=self._rebuild_query)
+        self.civil_ex_box.pack(side=tk.LEFT, padx=(0, 6), fill=tk.X, expand=True)
+        self.civil_ex_ph = self.civil_ex_box
+        ToolTip(self.civil_ex_box.text, 'Enter negative exclusion terms e.g. -jobs -careers -recruiting -yell.com -wikipedia.org')
+        
+        self.civil_exclude_combo = ttk.Combobox(r5, values=[
+            "Choose Exclusion / + Add More...",
+            "🚫 Exclude Social Media (Instagram, Facebook, TikTok, X, YouTube)",
+            "💼 Exclude Recruitment & Job Boards (Indeed, TotalJobs, Reed, etc.)",
+            "🛡️ Exclude Commercial Directories (Yell, 192, Yelp, Thomson, etc.)",
+            "📰 Exclude News, Media, Press & Wikipedia",
+            "🛡️ Exclude All Noise (Social + Jobs + Directories + News + Wiki)",
+            "(Clear Exclusions)"
+        ], state="readonly", width=34)
+        self.civil_exclude_combo.current(0)
+        self.civil_exclude_combo.pack(side=tk.LEFT, padx=(0, 4))
+        self.civil_exclude_combo.bind("<<ComboboxSelected>>", self._on_civil_exclude_selected)
+        ToolTip(self.civil_exclude_combo, "Select pre-configured negative exclusion filters.")
+        
+        btn_add_civil_ex = ttk.Button(r5, text="+ Add Exclude", style="Accent.TButton", command=self._add_civil_exclude_selected)
+        btn_add_civil_ex.pack(side=tk.LEFT, padx=(0, 4))
+        ToolTip(btn_add_civil_ex, "Appends the selected exclusion pattern to your civil service exclusions without overwriting.")
+        
+        btn_multi_civil_ex = ttk.Button(r5, text="📋 Multi-Select...", style="Secondary.TButton", command=lambda: self._open_multi_exclusion_dialog(self.civil_ex_ph, self.civil_exclude_var))
+        btn_multi_civil_ex.pack(side=tk.LEFT, padx=(0, 4))
+        ToolTip(btn_multi_civil_ex, "Opens checklist to select multiple negative exclusion categories at once.")
+        
+        btn_clear_ex = ttk.Button(r5, text="Clear Exclude", style="Secondary.TButton", command=lambda: (self.civil_ex_ph.set_real_value(""), self._rebuild_query()))
+        btn_clear_ex.pack(side=tk.RIGHT)
+        ToolTip(btn_clear_ex, "Clears negative exclusion filters.")
+
+        # Row 6: Optional Modifiers & Contact Filters
+        r6 = ttk.Frame(self.subtab_civil)
+        r6.pack(fill=tk.X, pady=(3, 1))
+        
+        hl_mod = self._create_help_label(r6, "Optional Modifiers:", "Refine search with intext, inurl, official domain restrictions, or public contact filters.", width=23)
+        hl_mod.pack(side=tk.LEFT)
+        
+        # intext modifier
+        lbl_intext = ttk.Label(r6, text="intext:")
+        lbl_intext.pack(side=tk.LEFT, padx=(0, 2))
+        self.civil_intext_box = AutoExpandingTextBox(r6, placeholder='e.g. foi', string_var=self.civil_intext_var, on_change=self._rebuild_query, width=13)
+        self.civil_intext_box.pack(side=tk.LEFT, padx=(0, 6))
+        self.civil_intext_ph = self.civil_intext_box
+        ToolTip(self.civil_intext_box.text, "Optional keyword required in body text (e.g. foi, planning, or complaints).")
+        
+        # inurl modifier
+        lbl_inurl = ttk.Label(r6, text="inurl:")
+        lbl_inurl.pack(side=tk.LEFT, padx=(0, 2))
+        self.civil_inurl_box = AutoExpandingTextBox(r6, placeholder='e.g. contact', string_var=self.civil_inurl_var, on_change=self._rebuild_query, width=13)
+        self.civil_inurl_box.pack(side=tk.LEFT, padx=(0, 6))
+        self.civil_inurl_ph = self.civil_inurl_box
+        ToolTip(self.civil_inurl_box.text, "Optional keyword required in URL path (e.g. contact, departments, or teams).")
+        
+        # site modifier combo
+        lbl_site = ttk.Label(r6, text="site:")
+        lbl_site.pack(side=tk.LEFT, padx=(0, 2))
+        civil_site_combo = ttk.Combobox(r6, textvariable=self.civil_site_var, values=[
+            "",
+            "site:*.gov.uk",
+            "site:*.nhs.uk",
+            "site:*.police.uk",
+            "site:*.gov.uk OR site:*.nhs.uk OR site:*.police.uk",
+            "(All Websites / Open Web)"
+        ], width=14)
+        civil_site_combo.pack(side=tk.LEFT, padx=(0, 6))
+        civil_site_combo.bind("<<ComboboxSelected>>", lambda e: self._rebuild_query())
+        civil_site_combo.bind("<KeyRelease>", lambda e: self._rebuild_query())
+        ToolTip(civil_site_combo, "Restrict search to official public sector domains (e.g. .gov.uk, .nhs.uk, .police.uk).")
+        
+        # Filetype
+        lbl_ft = ttk.Label(r6, text="filetype:")
+        lbl_ft.pack(side=tk.LEFT, padx=(0, 2))
+        civil_ft_combo = ttk.Combobox(r6, textvariable=self.civil_filetype_var, values=["None", "filetype:pdf", "filetype:xls OR filetype:xlsx", "filetype:doc OR filetype:docx"], width=13, state="readonly")
+        civil_ft_combo.pack(side=tk.LEFT, padx=(0, 6))
+        civil_ft_combo.bind("<<ComboboxSelected>>", lambda e: self._rebuild_query())
+        
+        # Public emails & phone dorks
+        chk_civil_email = ttk.Checkbutton(r6, text="Official Emails", variable=self.civil_email_dork_var, command=self._rebuild_query)
+        chk_civil_email.pack(side=tk.LEFT, padx=(0, 6))
+        ToolTip(chk_civil_email, "Appends official public email hunter (@gov.uk OR @nhs.net OR @police.uk).")
+        
+        chk_civil_phone = ttk.Checkbutton(r6, text="Switchboard / Tel", variable=self.civil_phone_dork_var, command=self._rebuild_query)
+        chk_civil_phone.pack(side=tk.LEFT, padx=(0, 6))
+        ToolTip(chk_civil_phone, "Appends public switchboard and direct dial indicators.")
+
+        # Row 7: Quick Actions Toolbar
+        r7 = ttk.Frame(self.subtab_civil)
+        r7.pack(fill=tk.X, pady=(4, 0))
+        
+        btn_reset_civ = ttk.Button(r7, text="🔄 Reset Civil Form", style="Secondary.TButton", command=self._reset_civil_form)
+        btn_reset_civ.pack(side=tk.LEFT, padx=(0, 8))
+        ToolTip(btn_reset_civ, "Clears all Civil Services & Utilities search fields back to empty.")
+        
+        btn_copy_civ = ttk.Button(r7, text="📋 Copy Query", style="Secondary.TButton", command=self._copy_query_to_clipboard)
+        btn_copy_civ.pack(side=tk.LEFT, padx=(0, 8))
+        ToolTip(btn_copy_civ, "Copies assembled search query to clipboard.")
+        
+        btn_guide_bottom = ttk.Button(r7, text="💡 How to Match & Add More Departments Guide", style="Secondary.TButton", command=self._show_civil_guide)
+        btn_guide_bottom.pack(side=tk.LEFT, padx=(0, 8))
+        ToolTip(btn_guide_bottom, "Learn how departments are named in different public authorities and utilities.")
+
+    def _show_civil_guide(self):
+        """Displays an interactive modal guide showing how departments vary across civil services and how to search them."""
+        guide_win = tk.Toplevel(self)
+        guide_win.title("💡 Civil Services & Utilities Department Matching Guide")
+        guide_win.geometry("920x680")
+        guide_win.minsize(750, 500)
+        guide_win.configure(bg="#F8FAFC")
+        
+        header_frame = tk.Frame(guide_win, bg="#1E293B", padx=16, pady=12)
+        header_frame.pack(fill=tk.X)
+        
+        lbl_title = tk.Label(header_frame, text="🏛️ Civil Services & Utilities: Department & Contact Matching Guide", font=("Segoe UI", 12, "bold"), fg="#FFFFFF", bg="#1E293B")
+        lbl_title.pack(anchor="w")
+        
+        lbl_sub = tk.Label(header_frame, text="Learn how different public sector bodies structure their departments and how to construct targeted boolean queries.", font=("Segoe UI", 9), fg="#94A3B8", bg="#1E293B")
+        lbl_sub.pack(anchor="w", pady=(2, 0))
+        
+        # Scrollable container
+        canvas = tk.Canvas(guide_win, bg="#F8FAFC", highlightthickness=0)
+        v_scroll = ttk.Scrollbar(guide_win, orient=tk.VERTICAL, command=canvas.yview)
+        scroll_content = ttk.Frame(canvas, padding="14")
+        
+        scroll_content.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas_win = canvas.create_window((0, 0), window=scroll_content, anchor="nw")
+        
+        def _on_canvas_resize(event):
+            canvas.itemconfig(canvas_win, width=event.width)
+        canvas.bind("<Configure>", _on_canvas_resize)
+        canvas.configure(yscrollcommand=v_scroll.set)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Section 1: Overview & Syntax Rules
+        sec1 = ttk.LabelFrame(scroll_content, text=" 📌 How Sector-Specific Department Matching Works ", padding="10")
+        sec1.pack(fill=tk.X, pady=(0, 10))
+        
+        t1 = (
+            "In the UK and internationally, civil services and public bodies name their departments differently depending on their primary mandate:\n\n"
+            "• Local Councils use: 'Planning & Building Control', 'Environmental Health', 'Waste Management', 'Community Safety', 'Procurement & Commissioning'.\n"
+            "• Police Forces use: 'ICT Directorate', 'Digital Forensics', 'Cyber Crime Unit', 'Estates & Facilities', 'Fleet Management', 'Public Protection'.\n"
+            "• NHS Trusts use: 'Health Informatics / Digital Health', 'Estates & Facilities', 'Clinical Engineering', 'Procurement & Supplies', 'Emergency Preparedness (EPRR)'.\n"
+            "• Fire & Rescue Services use: 'Fire Protection & Business Safety', 'Control Room Systems', 'Fleet & Equipment', 'Operational Planning'.\n"
+            "• Electricity Utilities (DNOs) use: 'Control Systems & SCADA', 'Major Connections', 'Substation Engineering', 'Asset Management', 'Wayleaves & Consents'.\n"
+            "• Gas Distribution Networks use: 'Gas Control', 'Pipeline Integrity', 'Mains Replacement', 'SHEQ / Process Safety', 'Connections'.\n"
+            "• Water Authorities use: 'Water Quality & Treatment', 'Developer Services', 'Capital Delivery', 'Catchment Management', 'Pollution Prevention'."
+        )
+        lbl_t1 = ttk.Label(sec1, text=t1, font=("Segoe UI", 9), foreground="#334155", wraplength=840, justify=tk.LEFT)
+        lbl_t1.pack(fill=tk.X)
+        
+        # Section 2: Copyable Department Keywords Table
+        sec2 = ttk.LabelFrame(scroll_content, text=" 📋 Reference Cheat Sheet by Sector (Click to Load or Copy) ", padding="10")
+        sec2.pack(fill=tk.X, pady=(0, 10))
+        
+        table_data = [
+            ("👮 Police & Law Enforcement", '("Police Force" OR "Constabulary" OR "Metropolitan Police")', '("ICT" OR "Digital Forensics" OR "Cyber Crime" OR "Data & Systems")', 'civil_police_tech'),
+            ("🏛️ Local Councils (Building & Planning)", '("City Council" OR "County Council" OR "Borough Council")', '("Planning Department" OR "Building Control" OR "Development Management")', 'civil_council_planning_building'),
+            ("🌿 Local Councils (Waste & Environment)", '("City Council" OR "County Council" OR "Borough Council")', '("Environmental Health" OR "Waste Management" OR "Sustainability" OR "Climate")', 'civil_council_env_waste'),
+            ("🏥 NHS Hospitals & Healthcare Trusts", '("NHS Trust" OR "NHS Foundation Trust" OR "Integrated Care Board")', '("Estates & Facilities" OR "Digital Health" OR "Health Informatics" OR "Clinical Systems")', 'civil_nhs_estates_tech'),
+            ("🚑 Ambulance Services & EMS", '("Ambulance Service NHS Trust" OR "Ambulance Service")', '("Emergency Operations Centre" OR "Fleet & Transport" OR "ICT" OR "Logistics")', 'civil_ambulance_ops'),
+            ("🚒 Fire & Rescue Authorities", '("Fire and Rescue Service" OR "Fire Brigade")', '("Fire Protection" OR "Business Safety" OR "Fleet & Equipment" OR "ICT")', 'civil_fire_safety_fleet'),
+            ("⚡ Electricity Grid & DNOs", '("National Grid" OR "UK Power Networks" OR "SSEN" OR "Northern Powergrid")', '("Network Operations" OR "SCADA" OR "Major Connections" OR "Substations")', 'civil_utilities_electricity'),
+            ("⛽ Gas Distribution Networks", '("Cadent Gas" OR "SGN" OR "Northern Gas Networks" OR "Wales & West")', '("Network Operations" OR "Gas Control" OR "Pipeline Integrity" OR "Mains Replacement")', 'civil_utilities_gas'),
+            ("💧 Water & Sewage Authorities", '("Thames Water" OR "Severn Trent" OR "United Utilities" OR "Anglian Water")', '("Water Quality & Treatment" OR "Wastewater Operations" OR "Developer Services")', 'civil_utilities_water'),
+            ("📦 Civil Procurement & Contracts", '("Police" OR "Council" OR "NHS Trust" OR "Fire Service" OR "Utilities")', '("Procurement & Commercial" OR "Contracts & Tenders" OR "Commissioning")', 'civil_procurement_contracts'),
+            ("🛡️ Civil Security & Emergency Planning", '("Police" OR "Council" OR "NHS Trust" OR "Fire Service")', '("Emergency Planning" OR "Resilience" OR "CCTV & Security" OR "Public Safety")', 'civil_security_resilience')
+        ]
+        
+        for sector_name, sec_terms, dept_terms, preset_key in table_data:
+            row_frame = ttk.Frame(sec2)
+            row_frame.pack(fill=tk.X, pady=3)
+            
+            lbl_s = ttk.Label(row_frame, text=sector_name, font=("Segoe UI", 9, "bold"), width=32)
+            lbl_s.pack(side=tk.LEFT)
+            
+            lbl_d = ttk.Label(row_frame, text=dept_terms, font=("Segoe UI", 8), foreground="#475569", width=48)
+            lbl_d.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+            
+            btn_load = ttk.Button(row_frame, text="Load in Builder", style="Secondary.TButton", width=14, command=lambda pk=preset_key, gw=guide_win: (self._load_preset(pk), gw.destroy()))
+            btn_load.pack(side=tk.RIGHT)
+            ToolTip(btn_load, f"Loads the {sector_name} template directly into Tab 3.")
+
+        # Section 3: How to add custom terms
+        sec3 = ttk.LabelFrame(scroll_content, text=" 💡 How to Add Your Own Custom Departments & Roles ", padding="10")
+        sec3.pack(fill=tk.X, pady=(0, 6))
+        
+        t3 = (
+            "1. Enter Comma-Separated Keywords:\n"
+            "   Simply type words into the Department box (e.g. Legal, Data Protection, Freedom of Information) and click '+ Quotes/OR'.\n"
+            "   The builder will automatically convert them into a boolean OR group: (\"Legal\" OR \"Data Protection\" OR \"Freedom of Information\").\n\n"
+            "2. Combine with Public Registers & FOI:\n"
+            "   Add 'intext:foi' or select 'Public Registers & FOI Disclosures' from the Contact dropdown to uncover official disclosures and department structures.\n\n"
+            "3. Restrict to Official Domains:\n"
+            "   Use the 'site:' dropdown to lock results to official '.gov.uk', '.nhs.uk', or '.police.uk' domains for 100% verified authority results."
+        )
+        lbl_t3 = ttk.Label(sec3, text=t3, font=("Segoe UI", 9), foreground="#334155", wraplength=840, justify=tk.LEFT)
+        lbl_t3.pack(fill=tk.X)
+        
+        btn_close = ttk.Button(scroll_content, text="Close Guide", style="Accent.TButton", command=guide_win.destroy)
+        btn_close.pack(pady=10)
+
     def _reset_builder(self):
         """Clears all textboxes, criteria fields, and search query to a completely blank state across all tabs."""
         self._updating_query = True
@@ -2780,6 +3489,8 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             self.exclude_ph.show()
         else:
             self.exclude_var.set("")
+        if hasattr(self, "targeted_exclude_combo"):
+            self.targeted_exclude_combo.set("Choose Exclusion / + Add More...")
         self.filetype_var.set("None")
         
         # Generalized fields (Tab 2)
@@ -2819,6 +3530,50 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             self.gen_geo_combo.set("Choose Region...")
         if hasattr(self, "gen_exclude_combo"):
             self.gen_exclude_combo.set("Choose Exclusion Pattern...")
+
+        # Civil Services fields (Tab 3)
+        if hasattr(self, "civil_sector_ph"):
+            self.civil_sector_ph.show()
+        else:
+            self.civil_sector_var.set("")
+        if hasattr(self, "civil_dept_ph"):
+            self.civil_dept_ph.show()
+        else:
+            self.civil_dept_var.set("")
+        if hasattr(self, "civil_contact_ph"):
+            self.civil_contact_ph.show()
+        else:
+            self.civil_contact_var.set("")
+        if hasattr(self, "civil_geo_ph"):
+            self.civil_geo_ph.show()
+        else:
+            self.civil_geo_var.set("")
+        if hasattr(self, "civil_ex_ph"):
+            self.civil_ex_ph.show()
+        else:
+            self.civil_exclude_var.set("")
+        if hasattr(self, "civil_intext_ph"):
+            self.civil_intext_ph.show()
+        else:
+            self.civil_intext_var.set("")
+        if hasattr(self, "civil_inurl_ph"):
+            self.civil_inurl_ph.show()
+        else:
+            self.civil_inurl_var.set("")
+        self.civil_site_var.set("")
+        self.civil_filetype_var.set("None")
+        self.civil_email_dork_var.set(False)
+        self.civil_phone_dork_var.set(False)
+        if hasattr(self, "civil_sector_combo"):
+            self.civil_sector_combo.set("Choose Civil / Utility Sector...")
+        if hasattr(self, "civil_dept_combo"):
+            self.civil_dept_combo.set("Choose Department / Division...")
+        if hasattr(self, "civil_contact_combo"):
+            self.civil_contact_combo.set("Choose Contact / Role Filter...")
+        if hasattr(self, "civil_geo_combo"):
+            self.civil_geo_combo.set("Choose Region...")
+        if hasattr(self, "civil_exclude_combo"):
+            self.civil_exclude_combo.set("Choose Exclusion Pattern...")
             
         self.assembled_query_var.set("")
         if hasattr(self, "preset_combo"):
@@ -3821,13 +4576,19 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
     def _flash_query_preview_recalled(self, subtab_name="Tab 1: Targeted Search"):
         """Provides prominent visual feedback highlighting that a past query was recalled."""
         try:
-            self.query_preview_entry.configure(style="RecalledSuccess.TEntry")
+            if hasattr(self, "query_preview_box") and hasattr(self.query_preview_box, "text"):
+                self.query_preview_box.text.configure(bg="#ECFDF5", highlightbackground="#10B981", highlightcolor="#10B981")
+            elif hasattr(self, "query_preview_entry"):
+                self.query_preview_entry.configure(style="RecalledSuccess.TEntry")
         except Exception:
             pass
             
         def _restore_style():
             try:
-                self.query_preview_entry.configure(style="TEntry")
+                if hasattr(self, "query_preview_box") and hasattr(self.query_preview_box, "text"):
+                    self.query_preview_box.text.configure(bg="#FFFFFF", highlightbackground="#CBD5E1", highlightcolor="#0284C7")
+                elif hasattr(self, "query_preview_entry"):
+                    self.query_preview_entry.configure(style="TEntry")
             except Exception:
                 pass
                 
@@ -6414,8 +7175,10 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             sel_idx = self.criteria_notebook.index(sel)
             if sel_idx == 0:
                 self.active_criteria_mode = "targeted"
-            else:
+            elif sel_idx == 1:
                 self.active_criteria_mode = "generalized"
+            elif sel_idx == 2:
+                self.active_criteria_mode = "civil"
             self._rebuild_query()
         except Exception:
             pass
@@ -6433,6 +7196,320 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         if t.startswith("e.g.") or t.startswith("(e.g."):
             return ""
         return t
+
+    def _on_civil_sector_selected(self, event=None):
+        val = self.civil_sector_combo.get()
+        if "All Civil Services & Utilities" in val:
+            self._set_ph_field(getattr(self, "civil_sector_ph", None), self.civil_sector_var, '("Police" OR "City Council" OR "County Council" OR "Borough Council" OR "NHS Trust" OR "Ambulance Service" OR "Fire and Rescue" OR "National Grid" OR "Cadent Gas" OR "Water Authority")')
+        elif "Police & Law Enforcement" in val:
+            self._set_ph_field(getattr(self, "civil_sector_ph", None), self.civil_sector_var, '("Police Force" OR "Constabulary" OR "Metropolitan Police" OR "Police Scotland" OR "Police and Crime Commissioner")')
+        elif "Local Councils & Municipalities" in val:
+            self._set_ph_field(getattr(self, "civil_sector_ph", None), self.civil_sector_var, '("City Council" OR "County Council" OR "Borough Council" OR "District Council" OR "Unitary Authority")')
+        elif "NHS Hospitals & Healthcare" in val:
+            self._set_ph_field(getattr(self, "civil_sector_ph", None), self.civil_sector_var, '("NHS Trust" OR "NHS Foundation Trust" OR "Health Board" OR "Integrated Care Board" OR "NHS England")')
+        elif "Ambulance Services" in val:
+            self._set_ph_field(getattr(self, "civil_sector_ph", None), self.civil_sector_var, '("Ambulance Service NHS Trust" OR "Ambulance Service" OR "Scottish Ambulance Service" OR "Welsh Ambulance Services")')
+        elif "Fire & Rescue Authorities" in val:
+            self._set_ph_field(getattr(self, "civil_sector_ph", None), self.civil_sector_var, '("Fire and Rescue Service" OR "Fire Brigade" OR "Fire Authority")')
+        elif "Electricity Networks" in val:
+            self._set_ph_field(getattr(self, "civil_sector_ph", None), self.civil_sector_var, '("National Grid" OR "UK Power Networks" OR "SSEN" OR "Northern Powergrid" OR "Electricity North West" OR "SP Energy Networks" OR "Distribution Network Operator")')
+        elif "Gas Distribution" in val:
+            self._set_ph_field(getattr(self, "civil_sector_ph", None), self.civil_sector_var, '("Cadent Gas" OR "SGN" OR "Northern Gas Networks" OR "Wales and West Utilities" OR "National Gas Transmission")')
+        elif "Water & Sewage" in val:
+            self._set_ph_field(getattr(self, "civil_sector_ph", None), self.civil_sector_var, '("Thames Water" OR "Severn Trent" OR "United Utilities" OR "Anglian Water" OR "Yorkshire Water" OR "Southern Water" OR "Northumbrian Water" OR "Wessex Water" OR "South West Water" OR "Scottish Water" OR "Welsh Water")')
+        elif "Transport, Highways & Rail" in val:
+            self._set_ph_field(getattr(self, "civil_sector_ph", None), self.civil_sector_var, '("National Highways" OR "Transport for London" OR "Network Rail" OR "Transport Scotland" OR "Transport for Wales")')
+        elif "Environmental & Safety Regulators" in val:
+            self._set_ph_field(getattr(self, "civil_sector_ph", None), self.civil_sector_var, '("Environment Agency" OR "SEPA" OR "Natural Resources Wales" OR "Health and Safety Executive" OR "HSE" OR "Ofgem" OR "Ofwat")')
+        elif "Clear" in val:
+            self._set_ph_field(getattr(self, "civil_sector_ph", None), self.civil_sector_var, "")
+        self._rebuild_query()
+
+    def _on_civil_dept_selected(self, event=None):
+        val = self.civil_dept_combo.get()
+        if "Technology, ICT, Digital" in val:
+            self._set_ph_field(getattr(self, "civil_dept_ph", None), self.civil_dept_var, '("Information and Communications Technology" OR "ICT Department" OR "Digital Services" OR "Cyber Security" OR "Data and Systems" OR "Informatics")')
+        elif "Environmental Services, Sustainability" in val:
+            self._set_ph_field(getattr(self, "civil_dept_ph", None), self.civil_dept_var, '("Environmental Health" OR "Waste Management" OR "Sustainability" OR "Climate Emergency" OR "Pollution Control" OR "Environmental Management")')
+        elif "Planning, Development, Building" in val:
+            self._set_ph_field(getattr(self, "civil_dept_ph", None), self.civil_dept_var, '("Planning Department" OR "Building Control" OR "Development Management" OR "Regeneration" OR "Highways and Infrastructure" OR "Major Projects")')
+        elif "Security, Emergency Planning" in val:
+            self._set_ph_field(getattr(self, "civil_dept_ph", None), self.civil_dept_var, '("Emergency Planning" OR "Civil Contingencies and Resilience" OR "Corporate Security" OR "CCTV and Public Safety" OR "Health and Safety" OR "EPRR")')
+        elif "Procurement, Commercial" in val:
+            self._set_ph_field(getattr(self, "civil_dept_ph", None), self.civil_dept_var, '("Procurement and Commercial" OR "Strategic Sourcing" OR "Contracts and Tenders" OR "Commissioning" OR "Supply Chain")')
+        elif "Estates, Facilities" in val:
+            self._set_ph_field(getattr(self, "civil_dept_ph", None), self.civil_dept_var, '("Estates and Facilities" OR "Property Services" OR "Capital Development" OR "Asset Management" OR "Facilities Directorate")')
+        elif "Operations, Fleet" in val:
+            self._set_ph_field(getattr(self, "civil_dept_ph", None), self.civil_dept_var, '("Operations Directorate" OR "Fleet Management" OR "Transport Logistics" OR "Control Room" OR "Field Engineering")')
+        elif "Finance, Audit" in val:
+            self._set_ph_field(getattr(self, "civil_dept_ph", None), self.civil_dept_var, '("Finance Directorate" OR "Internal Audit" OR "Corporate Governance" OR "Legal Services" OR "Democratic Services")')
+        elif "Public Protection, Licensing" in val:
+            self._set_ph_field(getattr(self, "civil_dept_ph", None), self.civil_dept_var, '("Public Protection" OR "Licensing Department" OR "Regulatory Enforcement" OR "Trading Standards" OR "Business Compliance")')
+        elif "Customer Services, Public Enquiries" in val:
+            self._set_ph_field(getattr(self, "civil_dept_ph", None), self.civil_dept_var, '("Customer Services" OR "Public Enquiries" OR "Freedom of Information" OR "FOI Team" OR "Press Office" OR "Communications")')
+        elif "Clear" in val:
+            self._set_ph_field(getattr(self, "civil_dept_ph", None), self.civil_dept_var, "")
+        self._rebuild_query()
+
+    def _on_civil_contact_selected(self, event=None):
+        val = self.civil_contact_combo.get()
+        if "Heads of Department" in val:
+            self._set_ph_field(getattr(self, "civil_contact_ph", None), self.civil_contact_var, '("Head of" OR "Director of" OR "Chief Officer" OR "Manager" OR "Lead Officer" OR "Executive Director")')
+        elif "Direct Contact Numbers" in val:
+            self._set_ph_field(getattr(self, "civil_contact_ph", None), self.civil_contact_var, '("direct dial" OR "switchboard" OR "phone" OR "telephone" OR "helpline" OR "call us on")')
+        elif "Official Department Email" in val:
+            self._set_ph_field(getattr(self, "civil_contact_ph", None), self.civil_contact_var, '("email us at" OR "contact form" OR "enquiries@" OR "department email" OR "foi@")')
+        elif "Public Registers" in val:
+            self._set_ph_field(getattr(self, "civil_contact_ph", None), self.civil_contact_var, '("public register" OR "freedom of information" OR "FOI disclosure log" OR "meeting minutes" OR "committee report")')
+        elif "Strategy Documents" in val:
+            self._set_ph_field(getattr(self, "civil_contact_ph", None), self.civil_contact_var, '("annual report" OR "strategy document" OR "business plan" OR "tender specification" OR "procurement pipeline")')
+        elif "Open" in val or "Any" in val:
+            self._set_ph_field(getattr(self, "civil_contact_ph", None), self.civil_contact_var, "")
+        self._rebuild_query()
+
+    def _on_civil_geo_selected(self, event=None):
+        val = self.civil_geo_combo.get()
+        if "United Kingdom" in val:
+            self._set_ph_field(getattr(self, "civil_geo_ph", None), self.civil_geo_var, '("United Kingdom" OR "UK" OR "England" OR "Scotland" OR "Wales")')
+        elif "England & Greater" in val:
+            self._set_ph_field(getattr(self, "civil_geo_ph", None), self.civil_geo_var, '("England" OR "London" OR "South East" OR "Midlands" OR "North West" OR "Yorkshire")')
+        elif "Scotland" in val:
+            self._set_ph_field(getattr(self, "civil_geo_ph", None), self.civil_geo_var, '("Scotland" OR "Scottish" OR "Edinburgh" OR "Glasgow" OR "Aberdeen")')
+        elif "Wales" in val:
+            self._set_ph_field(getattr(self, "civil_geo_ph", None), self.civil_geo_var, '("Wales" OR "Welsh" OR "Cardiff" OR "Swansea" OR "Newport")')
+        elif "Northern Ireland" in val:
+            self._set_ph_field(getattr(self, "civil_geo_ph", None), self.civil_geo_var, '("Northern Ireland" OR "Belfast" OR "Derry" OR "Ulster")')
+        elif "Worldwide" in val:
+            self._set_ph_field(getattr(self, "civil_geo_ph", None), self.civil_geo_var, "")
+        self._rebuild_query()
+
+    def _open_multi_exclusion_dialog(self, target_ph, target_var):
+        """Opens a multi-selection modal dialog allowing the user to check multiple exclusion categories and insert them all at once."""
+        dlg = tk.Toplevel(self)
+        dlg.title("📋 Multi-Select Negative Exclusions")
+        dlg.geometry("640x550")
+        dlg.minsize(560, 460)
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.configure(bg="#F8FAFC")
+
+        # Header
+        hdr_frame = ttk.Frame(dlg)
+        hdr_frame.pack(fill=tk.X, padx=16, pady=(12, 6))
+        ttk.Label(hdr_frame, text="📋 Select Negative Exclusion Categories", font=("Segoe UI", 11, "bold"), foreground="#0F172A").pack(anchor="w")
+        ttk.Label(hdr_frame, text="Tick all categories you want to filter out. Selected filters will be merged into your exclusions.", font=("Segoe UI", 9), foreground="#64748B").pack(anchor="w", pady=(2, 0))
+
+        # Checkbox List in a framed container
+        list_frame = ttk.LabelFrame(dlg, text=" Available Exclusion Categories ", padding=10)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=6)
+
+        categories = [
+            ("🚫 Social Media Platforms", "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -pinterest.com -linkedin.com",
+             "Filters out social media feeds, profiles, and video links (Instagram, Facebook, TikTok, X, YouTube, Pinterest)."),
+            ("🏖️ OTA & Travel Booking Portals", "-tripadvisor.com -booking.com -expedia.com -hotels.com -airbnb.com -trivago.com -kayak.com -skyscanner.net -viator.com -getyourguide.com",
+             "Filters out third-party booking aggregators so you reach direct hotel/restaurant/tour websites."),
+            ("🏢 Business & Web Directories", "-yell.com -yelp.co.uk -yelp.com -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories",
+             "Eliminates business directories, yellow pages, review farms, and aggregators."),
+            ("💼 Job Boards & Recruitment", "-jobs -careers -recruiting -vacancies -indeed.com -totaljobs.com -reed.co.uk -cv-library.co.uk -glassdoor.com -fish4 -recruitment",
+             "Excludes recruitment agencies and job portals to focus on operating businesses."),
+            ("📰 News, Media & Press Outlets", "-news -bbc.co.uk -theguardian.com -dailymail.co.uk -thesun.co.uk -mirror.co.uk -telegraph.co.uk -itv.com -reuters.com -bloomberg.com -article",
+             "Excludes news stories, newspaper articles, blogs, and press releases."),
+            ("🏛️ Public Sector & Council Tips", "-council -civic -household -tip -hwrc -.gov.uk -.nhs.uk -police.uk",
+             "Filters out council administration, public authority tips, and municipal waste dumps."),
+            ("📚 Encyclopedias & Forums", "-wikipedia.org -reddit.com -quora.com -forum -discussion",
+             "Excludes Wikipedia encyclopedic entries, Reddit threads, and forum discussions.")
+        ]
+
+        var_map = []
+        cur_text = target_ph.get_real_value() if target_ph else target_var.get()
+        cur_lower = cur_text.lower() if cur_text else ""
+
+        for title, tokens, desc in categories:
+            first_tok = tokens.split()[0].lower()
+            is_checked = first_tok in cur_lower
+            c_var = tk.BooleanVar(value=is_checked)
+            
+            item_f = ttk.Frame(list_frame)
+            item_f.pack(fill=tk.X, pady=3, anchor="w")
+            
+            cb = ttk.Checkbutton(item_f, text=title, variable=c_var)
+            cb.pack(anchor="w")
+            
+            sub_lbl = ttk.Label(item_f, text=f"   {desc}", font=("Segoe UI", 8), foreground="#475569")
+            sub_lbl.pack(anchor="w")
+            
+            tok_lbl = ttk.Label(item_f, text=f"   Tokens: {tokens[:75]}...", font=("Consolas", 7), foreground="#2563EB")
+            tok_lbl.pack(anchor="w")
+            
+            var_map.append((c_var, tokens))
+
+        # Bottom Action Bar
+        btn_bar = ttk.Frame(dlg)
+        btn_bar.pack(fill=tk.X, padx=16, pady=(8, 14))
+
+        def _select_all():
+            for v, _ in var_map:
+                v.set(True)
+
+        def _deselect_all():
+            for v, _ in var_map:
+                v.set(False)
+
+        def _apply():
+            selected_tokens = []
+            for v, tokens in var_map:
+                if v.get():
+                    selected_tokens.append(tokens)
+            
+            if selected_tokens:
+                combined_new = " ".join(selected_tokens)
+                cur = target_ph.get_real_value() if target_ph else target_var.get()
+                merged = merge_exclusion_strings(cur, combined_new)
+                self._set_ph_field(target_ph, target_var, merged)
+            self._rebuild_query()
+            self.status_var.set("✅ Applied multi-selected negative exclusions.")
+            dlg.destroy()
+
+        ttk.Button(btn_bar, text="☑️ Select All", style="Secondary.TButton", command=_select_all).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_bar, text="◻️ Deselect All", style="Secondary.TButton", command=_deselect_all).pack(side=tk.LEFT, padx=(0, 6))
+        
+        ttk.Button(btn_bar, text="Cancel", style="Secondary.TButton", command=dlg.destroy).pack(side=tk.RIGHT, padx=(6, 0))
+        ttk.Button(btn_bar, text="✅ Insert Selected Exclusions", style="Primary.TButton", command=_apply).pack(side=tk.RIGHT)
+
+    def _get_targeted_exclusion_text(self, val):
+        if "Social Media" in val or "Instagram, Facebook" in val:
+            return "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -pinterest.com -linkedin.com"
+        elif "Job & Recruitment" in val:
+            return "-jobs -recruiter -recruiting -careers -hiring -intern -indeed.com -totaljobs.com"
+        elif "Directories" in val:
+            return "-yell.com -yelp.co.uk -192.com -thomsonlocal.com -directory"
+        elif "News & Media" in val:
+            return "-news -bbc.co.uk -theguardian.com -dailymail.co.uk -thesun.co.uk"
+        elif "Public Sector" in val:
+            return "-gov -council -nhs -police -.gov.uk -.nhs.uk"
+        elif "All Noise" in val:
+            return "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -jobs -recruiter -hiring -yell.com -directory -news -bbc.co.uk"
+        return ""
+
+    def _on_targeted_exclude_selected(self, event=None):
+        val = self.targeted_exclude_combo.get()
+        if "Clear" in val:
+            self._set_ph_field(getattr(self, "exclude_ph", None), self.exclude_var, "")
+        else:
+            new_ex = self._get_targeted_exclusion_text(val)
+            if new_ex:
+                cur_ex = self.exclude_ph.get_real_value() if hasattr(self, "exclude_ph") else self.exclude_var.get()
+                merged = merge_exclusion_strings(cur_ex, new_ex)
+                self._set_ph_field(getattr(self, "exclude_ph", None), self.exclude_var, merged)
+        self._rebuild_query()
+        if hasattr(self, "targeted_exclude_combo"):
+            self.targeted_exclude_combo.current(0)
+
+    def _add_targeted_exclude_selected(self):
+        val = self.targeted_exclude_combo.get()
+        if "Choose Exclusion" in val or "Clear" in val:
+            return
+        new_ex = self._get_targeted_exclusion_text(val)
+        if not new_ex:
+            return
+        cur_ex = self.exclude_ph.get_real_value() if hasattr(self, "exclude_ph") else self.exclude_var.get()
+        merged = merge_exclusion_strings(cur_ex, new_ex)
+        self._set_ph_field(getattr(self, "exclude_ph", None), self.exclude_var, merged)
+        self._rebuild_query()
+        self.status_var.set("Added selected exclusion pattern to query.")
+        if hasattr(self, "targeted_exclude_combo"):
+            self.targeted_exclude_combo.current(0)
+
+    def _get_civil_exclusion_text(self, val):
+        if "Social Media" in val or "Instagram, Facebook" in val:
+            return "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -pinterest.com"
+        elif "Recruitment & Job" in val:
+            return "-jobs -careers -recruiting -indeed.com -totaljobs.com -reed.co.uk -jobsite.co.uk -vacancies"
+        elif "Commercial Directories" in val:
+            return "-yell.com -yelp.co.uk -192.com -thomsonlocal.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -directory"
+        elif "News, Media, Press & Wikipedia" in val:
+            return "-news -bbc.co.uk -theguardian.com -dailymail.co.uk -thesun.co.uk -wikipedia.org"
+        elif "Exclude All Noise" in val or "All Noise" in val:
+            return "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -jobs -careers -recruiting -indeed.com -totaljobs.com -yell.com -192.com -directory -news -bbc.co.uk -wikipedia.org"
+        return ""
+
+    def _on_civil_exclude_selected(self, event=None):
+        val = self.civil_exclude_combo.get()
+        if "Clear" in val or "No Exclusions" in val:
+            self._set_ph_field(getattr(self, "civil_ex_ph", None), self.civil_exclude_var, "")
+        else:
+            new_ex = self._get_civil_exclusion_text(val)
+            if new_ex:
+                cur_ex = self.civil_ex_ph.get_real_value() if hasattr(self, "civil_ex_ph") else self.civil_exclude_var.get()
+                merged = merge_exclusion_strings(cur_ex, new_ex)
+                self._set_ph_field(getattr(self, "civil_ex_ph", None), self.civil_exclude_var, merged)
+        self._rebuild_query()
+        if hasattr(self, "civil_exclude_combo"):
+            self.civil_exclude_combo.current(0)
+
+    def _add_civil_exclude_selected(self):
+        val = self.civil_exclude_combo.get()
+        if "Choose Exclusion" in val or "No Exclusions" in val or "Clear" in val:
+            return
+        new_ex = self._get_civil_exclusion_text(val)
+        if not new_ex:
+            return
+        cur_ex = self.civil_ex_ph.get_real_value() if hasattr(self, "civil_ex_ph") else self.civil_exclude_var.get()
+        merged = merge_exclusion_strings(cur_ex, new_ex)
+        self._set_ph_field(getattr(self, "civil_ex_ph", None), self.civil_exclude_var, merged)
+        self._rebuild_query()
+        self.status_var.set("Added selected civil exclusion pattern to query.")
+        if hasattr(self, "civil_exclude_combo"):
+            self.civil_exclude_combo.current(0)
+
+    def _reset_civil_form(self):
+        """Resets all fields in the Civil Services & Utilities Criteria tab."""
+        self._updating_query = True
+        if hasattr(self, "civil_sector_ph"):
+            self.civil_sector_ph.show()
+        else:
+            self.civil_sector_var.set("")
+        if hasattr(self, "civil_dept_ph"):
+            self.civil_dept_ph.show()
+        else:
+            self.civil_dept_var.set("")
+        if hasattr(self, "civil_contact_ph"):
+            self.civil_contact_ph.show()
+        else:
+            self.civil_contact_var.set("")
+        if hasattr(self, "civil_geo_ph"):
+            self.civil_geo_ph.show()
+        else:
+            self.civil_geo_var.set("")
+        if hasattr(self, "civil_ex_ph"):
+            self.civil_ex_ph.show()
+        else:
+            self.civil_exclude_var.set("")
+        if hasattr(self, "civil_intext_ph"):
+            self.civil_intext_ph.show()
+        else:
+            self.civil_intext_var.set("")
+        if hasattr(self, "civil_inurl_ph"):
+            self.civil_inurl_ph.show()
+        else:
+            self.civil_inurl_var.set("")
+        self.civil_site_var.set("")
+        self.civil_filetype_var.set("None")
+        self.civil_email_dork_var.set(False)
+        self.civil_phone_dork_var.set(False)
+        if hasattr(self, "civil_sector_combo"):
+            self.civil_sector_combo.set("Choose Civil / Utility Sector...")
+        if hasattr(self, "civil_dept_combo"):
+            self.civil_dept_combo.set("Choose Department / Division...")
+        if hasattr(self, "civil_contact_combo"):
+            self.civil_contact_combo.set("Choose Contact / Role Filter...")
+        if hasattr(self, "civil_geo_combo"):
+            self.civil_geo_combo.set("Choose Region...")
+        if hasattr(self, "civil_exclude_combo"):
+            self.civil_exclude_combo.set("Choose Exclusion Pattern...")
+        self.assembled_query_var.set("")
+        self._updating_query = False
+        self.status_var.set("Civil services search criteria cleared.")
 
     def _on_gen_category_selected(self, event=None):
         val = self.gen_category_combo.get()
@@ -6516,27 +7593,59 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             self._set_ph_field(getattr(self, "gen_geo_ph", None), self.gen_geo_var, "")
         self._rebuild_query()
 
+    def _get_gen_exclusion_text(self, val):
+        if "Social Media" in val or "Instagram, Facebook" in val:
+            return "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -pinterest.com -linkedin.com"
+        elif "OTA Booking Portals" in val or "TripAdvisor, Booking" in val:
+            return "-tripadvisor.com -booking.com -expedia.com -hotels.com -airbnb.com -trivago.com -kayak.com -skyscanner.net -viator.com -getyourguide.com -jobs -careers -recruiting -news -directory"
+        elif "Directories (Yell, Yelp" in val:
+            return "-yell.com -yelp.co.uk -yelp.com -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories"
+        elif "News, Media & Press" in val:
+            return "-news -bbc.co.uk -theguardian.com -dailymail.co.uk -thesun.co.uk -mirror.co.uk -telegraph.co.uk -itv.com -reuters.com -bloomberg.com -article -story"
+        elif "Directories + News + Job" in val:
+            return "-yell.com -yelp.co.uk -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories -news -bbc.co.uk -theguardian.com -dailymail.co.uk -jobs -careers -vacancies"
+        elif "Council Tips + Directories" in val or "Council Tips" in val:
+            return "-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -yell.com -yelp.co.uk -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -directory -news -bbc.co.uk"
+        elif "Municipal/Council Tips & .gov.uk" in val:
+            return "-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -fish4"
+        elif "Job & Recruitment" in val:
+            return "-jobs -recruiting -indeed -careers -vacancies -totaljobs -reed -fish4 -cv-library"
+        elif "Public Sector" in val:
+            return "-gov -council -nhs -police -.gov.uk -.nhs.uk"
+        elif "Social Media + Directories + Jobs" in val:
+            return "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -pinterest.com -yell.com -yelp.co.uk -192.com -directory -jobs -careers -recruiting"
+        elif "All Noise" in val:
+            return "-facebook.com -instagram.com -tiktok.com -twitter.com -x.com -youtube.com -pinterest.com -tripadvisor.com -booking.com -expedia.com -yell.com -192.com -directory -news -bbc.co.uk -jobs -careers -recruiting"
+        return ""
+
     def _on_gen_exclude_selected(self, event=None):
         val = self.gen_exclude_combo.get()
-        if "OTA Booking Portals" in val or "TripAdvisor, Booking" in val:
-            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "-tripadvisor.com -booking.com -expedia.com -hotels.com -airbnb.com -trivago.com -kayak.com -skyscanner.net -jobs -careers -recruiting -news -directory")
-        elif "Directories (Yell, Yelp" in val:
-            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "-yell.com -yelp.co.uk -yelp.com -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories")
-        elif "News, Media & Press" in val:
-            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "-news -bbc.co.uk -theguardian.com -dailymail.co.uk -thesun.co.uk -mirror.co.uk -telegraph.co.uk -itv.com -reuters.com -bloomberg.com -article -story")
-        elif "Directories + News + Job" in val:
-            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "-yell.com -yelp.co.uk -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -checkatrade.com -trustpilot.com -directory -directories -news -bbc.co.uk -theguardian.com -dailymail.co.uk -jobs -careers -vacancies")
-        elif "Council Tips + Directories" in val:
-            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -yell.com -yelp.co.uk -thomsonlocal.com -192.com -cylex-uk.co.uk -scoot.co.uk -freeindex.co.uk -directory -news -bbc.co.uk")
-        elif "Municipal/Council Tips & .gov.uk" in val:
-            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "-council -civic -household -tip -hwrc -.gov.uk -jobs -recruiting -indeed -careers -vacancies -fish4")
-        elif "Job & Recruitment" in val:
-            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "-jobs -recruiting -indeed -careers -vacancies -totaljobs -reed -fish4 -cv-library")
-        elif "Public Sector" in val:
-            self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "-gov -council -nhs -police -.gov.uk -.nhs.uk")
-        elif "No Exclusions" in val:
+        if "Clear" in val or "No Exclusions" in val:
             self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, "")
+        else:
+            new_ex = self._get_gen_exclusion_text(val)
+            if new_ex:
+                cur_ex = self.gen_ex_ph.get_real_value() if hasattr(self, "gen_ex_ph") else self.gen_exclude_var.get()
+                merged = merge_exclusion_strings(cur_ex, new_ex)
+                self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, merged)
         self._rebuild_query()
+        if hasattr(self, "gen_exclude_combo"):
+            self.gen_exclude_combo.current(0)
+
+    def _add_gen_exclude_selected(self):
+        val = self.gen_exclude_combo.get()
+        if "Choose Exclusion" in val or "No Exclusions" in val or "Clear" in val:
+            return
+        new_ex = self._get_gen_exclusion_text(val)
+        if not new_ex:
+            return
+        cur_ex = self.gen_ex_ph.get_real_value() if hasattr(self, "gen_ex_ph") else self.gen_exclude_var.get()
+        merged = merge_exclusion_strings(cur_ex, new_ex)
+        self._set_ph_field(getattr(self, "gen_ex_ph", None), self.gen_exclude_var, merged)
+        self._rebuild_query()
+        self.status_var.set("Added selected exclusion pattern to query.")
+        if hasattr(self, "gen_exclude_combo"):
+            self.gen_exclude_combo.current(0)
 
     def _load_waste_facility_example(self):
         """Loads the generalized waste & materials recovery facility search query."""
@@ -6682,6 +7791,73 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             if ex:
                 parts.append(ex)
                 
+        elif self.active_criteria_mode == "civil":
+            # Civil Services & Utilities Mode (Tab 3)
+            # Group 1: Authority / Sector / Utility Terms
+            sector = self._clean_field_input(self.civil_sector_var.get())
+            if sector:
+                if not (sector.startswith("(") and sector.endswith(")")) and " OR " in sector:
+                    sector = f"({sector})"
+                parts.append(sector)
+                
+            # Group 2: Department / Functional Area / Division
+            dept = self._clean_field_input(self.civil_dept_var.get())
+            if dept:
+                if not (dept.startswith("(") and dept.endswith(")")) and " OR " in dept:
+                    dept = f"({dept})"
+                parts.append(dept)
+                
+            # Group 3: Contact / Role / Focus Filter
+            contact = self._clean_field_input(self.civil_contact_var.get())
+            if contact and "(Open" not in contact:
+                if not (contact.startswith("(") and contact.endswith(")")) and " OR " in contact:
+                    contact = f"({contact})"
+                parts.append(contact)
+                
+            # Group 4: Geographic / Regional Scope
+            geo = self._clean_field_input(self.civil_geo_var.get())
+            if geo and "(Worldwide" not in geo:
+                if not (geo.startswith("(") and geo.endswith(")")) and " OR " in geo:
+                    geo = f"({geo})"
+                parts.append(geo)
+                
+            # Optional intext
+            intext = self._clean_field_input(self.civil_intext_var.get())
+            if intext:
+                if not intext.startswith("intext:"):
+                    intext = f'intext:"{intext.strip(chr(34))}"'
+                parts.append(intext)
+                
+            # Optional inurl
+            inurl = self._clean_field_input(self.civil_inurl_var.get())
+            if inurl:
+                if not inurl.startswith("inurl:"):
+                    inurl = f'inurl:{inurl}'
+                parts.append(inurl)
+                
+            # Optional site
+            site = self.civil_site_var.get().strip()
+            if site and "(All" not in site:
+                parts.append(site)
+                
+            # Email hunting
+            if self.civil_email_dork_var.get():
+                parts.append('("@gov.uk" OR "@nhs.net" OR "@police.uk" OR "@nationalgrid.com" OR "@cadentgas.com" OR "@gmail.com")')
+                
+            # Phone hunting
+            if self.civil_phone_dork_var.get():
+                parts.append('("switchboard" OR "direct dial" OR "tel" OR "phone" OR "helpline" OR "contact us")')
+                
+            # Filetype
+            ft = self.civil_filetype_var.get().strip()
+            if ft and ft != "None":
+                parts.append(ft)
+                
+            # Exclusions
+            ex = self._clean_field_input(self.civil_exclude_var.get())
+            if ex:
+                parts.append(ex)
+
         else:
             # Generalized Criteria Mode (Tab 2)
             # Group 1: Facility / Industry / Sector Terms
@@ -6752,15 +7928,38 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         self._updating_query = True
         self.assembled_query_var.set(final_query)
         self._updating_query = False
-        self.assembled_query_var.set(final_query)
-        self._updating_query = False
 
     def _on_preset_selected(self, event=None):
         combo_val = self.preset_combo.get()
-        if "TARGETED" in combo_val or "GENERALIZED" in combo_val or "ENVIRONMENTAL" in combo_val or "FIRE & SMOKE" in combo_val or "TOURISM" in combo_val:
+        if "TARGETED" in combo_val or "GENERALIZED" in combo_val or "ENVIRONMENTAL" in combo_val or "FIRE & SMOKE" in combo_val or "TOURISM" in combo_val or "CIVIL SERVICES" in combo_val:
             return
         if "Clean / Blank" in combo_val:
             self._reset_builder()
+        # Civil Services, Utilities & Public Bodies Presets (Tab 3)
+        elif "All Civil Services & Utilities" in combo_val:
+            self._load_preset("civil_all_combined")
+        elif "Police: Tech, ICT & Cyber" in combo_val:
+            self._load_preset("civil_police_tech")
+        elif "Councils: Planning, Building" in combo_val:
+            self._load_preset("civil_council_planning_building")
+        elif "Councils: Environmental Health" in combo_val:
+            self._load_preset("civil_council_env_waste")
+        elif "NHS: Estates, Facilities & Digital" in combo_val:
+            self._load_preset("civil_nhs_estates_tech")
+        elif "Ambulance: Operations, Fleet" in combo_val:
+            self._load_preset("civil_ambulance_ops")
+        elif "Fire: Protection, Business Safety" in combo_val:
+            self._load_preset("civil_fire_safety_fleet")
+        elif "Electricity: Grid, DNOs & Substation" in combo_val:
+            self._load_preset("civil_utilities_electricity")
+        elif "Gas: Networks, Pipeline Integrity" in combo_val:
+            self._load_preset("civil_utilities_gas")
+        elif "Water: Quality, Treatment & Infrastructure" in combo_val:
+            self._load_preset("civil_utilities_water")
+        elif "Civil Procurement, Contracts & Tenders" in combo_val:
+            self._load_preset("civil_procurement_contracts")
+        elif "Civil Security, Emergency Planning" in combo_val:
+            self._load_preset("civil_security_resilience")
         # Tourism, Hospitality & Travel Sector Presets
         elif "Tourism: All-in-One" in combo_val:
             self._load_preset("gen_tourism_all")
@@ -6890,6 +8089,20 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
             self._set_ph_field(getattr(self, "custom_dom_ph", None), self.custom_email_domain_var, p_data.get("custom_email_domain", ""))
             self._set_ph_field(getattr(self, "exclude_ph", None), self.exclude_var, p_data.get("exclude", ""))
             self.filetype_var.set(p_data.get("filetype", "None"))
+        elif mode == "civil":
+            self.criteria_notebook.select(self.subtab_civil)
+            self.active_criteria_mode = "civil"
+            self._set_ph_field(getattr(self, "civil_sector_ph", None), self.civil_sector_var, p_data.get("sector", ""))
+            self._set_ph_field(getattr(self, "civil_dept_ph", None), self.civil_dept_var, p_data.get("dept", ""))
+            self._set_ph_field(getattr(self, "civil_contact_ph", None), self.civil_contact_var, p_data.get("contact", ""))
+            self._set_ph_field(getattr(self, "civil_geo_ph", None), self.civil_geo_var, p_data.get("geo", ""))
+            self._set_ph_field(getattr(self, "civil_ex_ph", None), self.civil_exclude_var, p_data.get("exclude", ""))
+            self._set_ph_field(getattr(self, "civil_intext_ph", None), self.civil_intext_var, p_data.get("intext", ""))
+            self._set_ph_field(getattr(self, "civil_inurl_ph", None), self.civil_inurl_var, p_data.get("inurl", ""))
+            self.civil_site_var.set(p_data.get("site", ""))
+            self.civil_filetype_var.set(p_data.get("filetype", "None"))
+            self.civil_email_dork_var.set(bool(p_data.get("email_dork", False)))
+            self.civil_phone_dork_var.set(bool(p_data.get("phone_dork", False)))
         elif mode == "generalized":
             self.criteria_notebook.select(self.subtab_generalized)
             self.active_criteria_mode = "generalized"
@@ -7222,9 +8435,12 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                     
                 first_name, last_name, display_name = parse_lead_name(name)
                 
-                industry = self.enrich_industry_var.get() if hasattr(self, "enrich_industry_var") else "fire"
-                custom_dom = self.custom_email_domain_var.get() if hasattr(self, "custom_email_domain_var") else ""
-                resolved_dom = custom_dom.strip().lower().replace("@", "") if (custom_dom and custom_dom.strip()) else resolve_organization_domain(company, headline, snippet, industry)
+                custom_dom = self._clean_field_input(self.custom_email_domain_var.get()) if (hasattr(self, "active_criteria_mode") and self.active_criteria_mode == "targeted" and hasattr(self, "custom_email_domain_var")) else ""
+                enrich_cdom = self._clean_field_input(self.enrich_custom_domain_var.get()) if hasattr(self, "enrich_custom_domain_var") else ""
+                active_custom_dom = custom_dom or enrich_cdom
+                
+                industry = self.enrich_industry_var.get() if hasattr(self, "enrich_industry_var") else "all"
+                resolved_dom = active_custom_dom.strip().lower().replace("@", "") if active_custom_dom else resolve_organization_domain(company, headline, snippet, industry)
             else:
                 # Open-Web Corporate / Facility / Commercial Lead (e.g. Materials Recovery Facility, Depot, Plant, MM Group)
                 # If auto-crawl is enabled, crawl the target website's contact pages directly
@@ -7273,14 +8489,17 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
                 last_name = ""
                 display_name = f"Site Contact ({company})" if company else "Site Contact / Commercial Enquiries"
                 
-                # Priority: If direct URL domain exists, that is the source domain!
-                custom_dom = self.custom_email_domain_var.get() if hasattr(self, "custom_email_domain_var") else ""
-                if custom_dom and custom_dom.strip():
-                    resolved_dom = custom_dom.strip().lower().replace("@", "")
+                # Priority: If direct URL domain exists, that is ALWAYS the true source domain!
+                custom_dom = self._clean_field_input(self.custom_email_domain_var.get()) if (hasattr(self, "active_criteria_mode") and self.active_criteria_mode == "targeted" and hasattr(self, "custom_email_domain_var")) else ""
+                enrich_cdom = self._clean_field_input(self.enrich_custom_domain_var.get()) if hasattr(self, "enrich_custom_domain_var") else ""
+                active_custom_dom = custom_dom or enrich_cdom
+                
+                if active_custom_dom:
+                    resolved_dom = active_custom_dom.strip().lower().replace("@", "")
                 elif url_domain:
                     resolved_dom = url_domain
                 else:
-                    industry = self.enrich_industry_var.get() if hasattr(self, "enrich_industry_var") else "fire"
+                    industry = self.enrich_industry_var.get() if hasattr(self, "enrich_industry_var") else "all"
                     resolved_dom = resolve_organization_domain(company, headline, snippet, industry)
 
             raw_email = ", ".join(list(dict.fromkeys(emails))) if emails else ""

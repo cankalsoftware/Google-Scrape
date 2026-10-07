@@ -56,28 +56,38 @@ def get_domain_lookup(industry: str = "all") -> dict:
 
     if ind in ("nhs", "health", "hospital"):
         return domains.get("nhs", {})
-    elif ind in ("council", "gov", "local_gov"):
+    elif ind in ("ambulance", "paramedic", "ems"):
+        return domains.get("ambulance_emergency", {})
+    elif ind in ("council", "gov", "local_gov", "municipality"):
         return domains.get("councils", {})
-    elif ind in ("police", "constabulary", "law"):
+    elif ind in ("police", "constabulary", "law", "law_enforcement"):
         return domains.get("police", {})
     elif ind in ("waste", "environment", "recycling", "ea", "sepa", "nrw"):
         return domains.get("environment", {})
-    elif ind in ("transport", "highways", "national_highways", "roads"):
+    elif ind in ("transport", "highways", "national_highways", "roads", "rail"):
         return domains.get("transport_highways", {})
     elif ind in ("tourism", "hospitality", "hotel", "hotels", "restaurant", "restaurants", "travel"):
         return domains.get("hospitality_tourism", {})
-    elif ind in ("fire", "fire_services", "rescue"):
+    elif ind in ("fire", "fire_services", "rescue", "brigade"):
         return domains.get("fire_services", {})
+    elif ind in ("utilities", "utility", "gas", "electricity", "electric", "power", "energy", "water", "sewage", "dno"):
+        return domains.get("utilities_energy_water", {})
+    elif ind in ("civil", "civil_services", "public_sector"):
+        # Combined public sector, emergency services and utilities
+        combined = {}
+        for sector in ["councils", "police", "nhs", "ambulance_emergency", "fire_services", "utilities_energy_water", "environment", "transport_highways"]:
+            combined.update(domains.get(sector, {}))
+        return combined
     else:
         # Combined public sector, infrastructure and major sectors
         combined = {}
-        for sector in ["fire_services", "environment", "transport_highways", "hospitality_tourism", "police", "nhs", "councils"]:
+        for sector in ["fire_services", "environment", "transport_highways", "hospitality_tourism", "police", "nhs", "ambulance_emergency", "councils", "utilities_energy_water"]:
             combined.update(domains.get(sector, {}))
         return combined
 
 
 def load_presets(reload: bool = False) -> dict:
-    """Loads targeted and generalized search presets from data/presets.json."""
+    """Loads targeted, generalized, and civil search presets from data/presets.json."""
     global _PRESETS_CACHE
     if _PRESETS_CACHE is not None and not reload:
         return _PRESETS_CACHE
@@ -92,23 +102,26 @@ def load_presets(reload: bool = False) -> dict:
         except Exception:
             pass
 
-    _PRESETS_CACHE = {"targeted_presets": {}, "generalized_presets": {}}
+    _PRESETS_CACHE = {"targeted_presets": {}, "generalized_presets": {}, "civil_presets": {}}
     return _PRESETS_CACHE
 
 
 def get_preset_data(preset_key: str) -> tuple:
     """
     Retrieves preset configuration by key.
-    Returns: (mode: str ['targeted'|'generalized'], config_dict: dict)
+    Returns: (mode: str ['targeted'|'generalized'|'civil'], config_dict: dict)
     """
     presets = load_presets()
     targeted = presets.get("targeted_presets", {})
     generalized = presets.get("generalized_presets", {})
+    civil = presets.get("civil_presets", {})
 
     if preset_key in targeted:
         return "targeted", targeted[preset_key]
     elif preset_key in generalized:
         return "generalized", generalized[preset_key]
+    elif preset_key in civil:
+        return "civil", civil[preset_key]
     return "unknown", {}
 
 

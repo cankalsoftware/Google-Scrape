@@ -187,15 +187,24 @@ Designed for laser-focused queries on specific platforms (e.g. LinkedIn, GitHub,
 - **Filetype (`filetype:`)**: Filters for specific file extensions (e.g. `filetype:pdf` for resumes/reports, `filetype:xlsx` for contact lists).
 
 #### Sub-Tab 2: Generalized Multi-Group Boolean Query Builder
-Designed for discovering commercial facilities, regional supply chains, manufacturing hubs, and multi-site operations across the entire open web:
-- **Group 1: Facility & Industry Terms (OR)**: Enter facility types (e.g. `("Distribution Centre" OR "Logistics Hub" OR "Manufacturing Plant")`).
-- **Group 2: Operational Scale & Multi-Site Triggers (OR)**: Define operational footprint triggers (e.g. `("multiple sites" OR "depots across" OR "nationwide" OR "head office")`).
-- **Group 3: Geographic Boundary Filters (OR)**: Define national or regional scope (e.g. `("United Kingdom" OR "England" OR "Scotland" OR "Wales")`).
-- **Group 4: Negative Noise Exclusions (-)**: Exclude consumer aggregators, directories, and municipal portals (e.g. `-council -civic -yell.com -yelp.com -directory -news`).
+Designed for discovering commercial facilities, regional supply chains, tourism & hospitality chains, manufacturing hubs, and multi-site operations across the entire open web:
+- **Group 1: Facility & Industry Terms (OR)**: Enter facility types or sectors (e.g. `("Hotels" OR "Restaurants" OR "Tour Operators" OR "Distribution Centre" OR "Manufacturing Plant")`).
+- **Group 2: Operational Scale & Multi-Site Triggers (OR)**: Define operational footprint triggers (e.g. `("multiple locations" OR "chain" OR "depots across" OR "nationwide" OR "head office")`).
+- **Group 3: Geographic Boundary Filters (OR)**: Define national or regional scope (e.g. `("United Kingdom" OR "England" OR "Europe" OR "United States")`).
+- **Group 4: Negative Noise Exclusions (-)**: Exclude consumer aggregators, OTA booking portals, directories, and municipal portals (e.g. `-tripadvisor.com -booking.com -yell.com -yelp.com -directory -news`).
 - **Modifiers**: Optional `intext:`, `inurl:`, or `intitle:` qualifiers.
 
+#### Sub-Tab 3: Civil Services, Utilities & Public Bodies Query Builder
+Dedicated multi-group boolean builder for researching public sector authorities, emergency services, local government, and critical utility networks with department and key contact matchers:
+- **Group 1: Civil / Utility Sector (OR)**: Target specific civil bodies (e.g., `("Police" OR "Local Council" OR "NHS Trust" OR "Fire Service" OR "National Grid" OR "Cadent Gas" OR "Water Authority")`).
+- **Group 2: Department / Functional Area (OR)**: Target functional areas across technology, environment, building control, security, procurement, estates, and fleet operations.
+- **Group 3: Contact & Role Focus (OR)**: Target key officers (*"Head of"*, *"Director of"*, *"Chief Officer"*), direct contact numbers (*"switchboard"*, *"direct dial"*, *"helpline"*), official department email inboxes, or public registers & FOI disclosures.
+- **Group 4: Geographic / Regional Scope (OR)**: UK-wide, England & London, Scotland, Wales, or Northern Ireland jurisdictions.
+- **Group 5: Negative Noise Exclusions (-)**: Strip recruitment job boards (*Indeed, TotalJobs, Reed*), commercial directories (*Yell, 192*), and news/media noise.
+- **Interactive Department Guide**: Click **`💡 Department Guide`** to open a comprehensive guide explaining how department names vary by sector (e.g. Council Planning vs Police ICT vs NHS Informatics vs Utility SCADA) with 1-click copyable queries.
+
 #### Search Presets & 1-Click Templates
-- Choose from dozens of pre-configured query templates across B2B Lead Generation, Tech Startups, Developer Debugging, Security OSINT, and Open Registries.
+- Choose from dozens of pre-configured query templates across Civil Services & Utilities, Tourism & Hospitality, Fire Hazards, B2B Lead Generation, Tech Startups, Developer Debugging, Security OSINT, and Open Registries.
 - Click **`Apply Template`** to populate all query builder fields instantly.
 - Save custom templates permanently to `data/presets.json` by clicking **`💾 Save Current as Preset`**.
 

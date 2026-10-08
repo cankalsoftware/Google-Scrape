@@ -2375,7 +2375,7 @@ class GoogleLeadScraperSuite(tk.Tk):
             self.style.theme_use("clam")
             
         # Ensure Tcl combobox popdown placement engine dynamically resizes to fit full text strings
-        # and strictly clamps within physical screen boundaries on any monitor or resolution
+        # and strictly stays on the same monitor and screen bounds as the parent application window
         try:
             self.tk.eval("""
 proc ::ttk::combobox::PlacePopdown {cb popdown} {
@@ -2383,8 +2383,6 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
     set y [winfo rooty $cb]
     set w [winfo width $cb]
     set h [winfo height $cb]
-    set screenW [winfo screenwidth $cb]
-    set screenH [winfo screenheight $cb]
     set style [$cb cget -style]
     set postoffset [ttk::style lookup $style -postoffset {} {0 0 0 0}]
     foreach var {x y w h} delta $postoffset {
@@ -2412,28 +2410,34 @@ proc ::ttk::combobox::PlacePopdown {cb popdown} {
         set w $reqW
     }
 
-    # Clamp popdown width so it never exceeds screen width
-    if {$w > [expr {$screenW - 20}]} {
-        set w [expr {$screenW - 20}]
-    }
+    # Anchor boundary clamping to the parent toplevel window so the dropdown always
+    # stays on the exact same monitor and screen space as the main application
+    set top [winfo toplevel $cb]
+    set topX [winfo rootx $top]
+    set topY [winfo rooty $top]
+    set topW [winfo width $top]
+    set topH [winfo height $top]
 
-    # Position below combobox by default
+    # Position directly below the combobox
     set Y [expr {$y + $h}]
 
-    # Flip above combobox if popdown would extend below the bottom of the screen
-    if {[expr {$Y + $H}] > [expr {$screenH - 35}]} {
+    # If the popdown would extend below the bottom of the app window, flip above if room exists
+    if {[expr {$Y + $H}] > [expr {$topY + $topH + 30}]} {
         set aboveY [expr {$y - $H}]
-        if {$aboveY >= 10} {
+        if {$aboveY >= $topY} {
             set Y $aboveY
         }
     }
 
-    # Clamp horizontal position so dropdown never spills past the right edge of the screen
-    if {[expr {$x + $w}] > [expr {$screenW - 10}]} {
-        set x [expr {$screenW - $w - 10}]
+    # Clamp horizontal position relative to the app window bounds on the current monitor
+    if {[expr {$x + $w}] > [expr {$topX + $topW - 10}]} {
+        set shiftX [expr {$topX + $topW - $w - 10}]
+        if {$shiftX >= $topX} {
+            set x $shiftX
+        }
     }
-    if {$x < 10} {
-        set x 10
+    if {$x < $topX} {
+        set x $topX
     }
 
     wm geometry $popdown ${w}x${H}+${x}+${Y}
